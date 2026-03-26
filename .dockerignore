@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+.git/
+.gitignore
+*.log
+.DS_Store
+test_*.py
+scripts/icon_build/
+.pytest_cache/
