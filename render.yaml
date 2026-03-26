@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: enterprisecore
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt && python scripts/db_render_init.py
+    startCommand: python run_all.py
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: API_PORT
+        value: 10001
+      - key: DB_NAME
+        value: enterprise_core
+      - key: DB_SSL
+        value: "true"
+      # Secrets — set via Render dashboard (Environment tab):
+      # DB_HOST       → TiDB Cloud host (e.g. gateway01.eu-central-1.prod.aws.tidbcloud.com)
+      # DB_PORT       → 4000
+      # DB_USER       → TiDB user (e.g. xxxxxxxxxx.root)
+      # DB_PASSWORD   → TiDB password
+      # OPENAI_API_KEY
+      # ANTHROPIC_API_KEY
+      # DEEPSEEK_API_KEY
+      # FLASK_SECRET_KEY  → generate: python3 -c "import secrets; print(secrets.token_hex(32))"
+      # ADMIN_PASSWORD    → your admin UI password
