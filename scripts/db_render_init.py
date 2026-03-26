@@ -33,12 +33,19 @@ def run_schema():
     conn = get_connection()
     cursor = conn.cursor()
 
+    # Disable FK checks so table creation order doesn't matter
+    cursor.execute("SET FOREIGN_KEY_CHECKS=0")
+
     # Split by semicolons and execute each statement
     statements = [s.strip() for s in sql.split(";") if s.strip()]
     ok = 0
     for stmt in statements:
-        # Skip MySQL-specific SET / /*!... */ lines that can fail outside MySQL
-        if stmt.startswith("/*!") or stmt.upper().startswith("SET @@SESSION"):
+        # Skip MySQL-specific SET / /*!... */ lines that can fail outside MySQL/TiDB
+        upper = stmt.upper()
+        if (stmt.startswith("/*!") or
+                upper.startswith("SET @@SESSION") or
+                upper.startswith("SET @OLD_") or
+                upper.startswith("SET @@SESSION.SQL_LOG_BIN")):
             continue
         try:
             cursor.execute(stmt)
@@ -51,6 +58,7 @@ def run_schema():
             else:
                 print(f"[db_init] Warning: {msg[:120]}")
 
+    cursor.execute("SET FOREIGN_KEY_CHECKS=1")
     conn.commit()
     cursor.close()
     conn.close()
