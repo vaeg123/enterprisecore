@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}EnterpriseCore AI{% endblock %}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3350;
+      --accent: #5b6af5;
+      --accent2: #7c3aed;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --high: #ef4444;
+      --medium: #f59e0b;
+      --low: #22c55e;
+      --unknown: #64748b;
+      --radius: 10px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* NAV */
+    nav {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      display: flex;
+      align-items: center;
+      height: 60px;
+      gap: 2rem;
+    }
+    .nav-brand {
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: var(--accent);
+      letter-spacing: -0.5px;
+      text-decoration: none;
+    }
+    .nav-brand span { color: var(--text-muted); font-weight: 400; }
+    nav a { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
+    nav a:hover { color: var(--text); }
+
+    /* LAYOUT */
+    .container { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+
+    /* CARDS */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+    }
+    .card + .card { margin-top: 1rem; }
+
+    /* BADGE RISQUE */
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .badge-HIGH    { background: rgba(239,68,68,.15);  color: var(--high);    border: 1px solid rgba(239,68,68,.3); }
+    .badge-MEDIUM  { background: rgba(245,158,11,.15); color: var(--medium);  border: 1px solid rgba(245,158,11,.3); }
+    .badge-LOW     { background: rgba(34,197,94,.15);  color: var(--low);     border: 1px solid rgba(34,197,94,.3); }
+    .badge-UNKNOWN { background: rgba(100,116,139,.15);color: var(--unknown); border: 1px solid rgba(100,116,139,.3); }
+
+    /* AGENT TYPE */
+    .agent-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      background: var(--surface2);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* BUTTONS */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 18px;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: opacity .15s;
+      text-decoration: none;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+
+    /* FORM */
+    .form-group { margin-bottom: 1.25rem; }
+    label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 6px; font-weight: 500; }
+    input[type=text], textarea {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 10px 14px;
+      font-size: 0.9rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color .15s;
+    }
+    input[type=text]:focus, textarea:focus { border-color: var(--accent); }
+    textarea { resize: vertical; min-height: 100px; }
+
+    /* STATUS */
+    .status-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    .status-running  { background: var(--medium); animation: pulse 1s infinite; }
+    .status-completed{ background: var(--low); }
+    .status-pending  { background: var(--unknown); }
+    .status-failed   { background: var(--high); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; } 50% { opacity: .4; }
+    }
+
+    /* PROGRESS */
+    .progress-bar {
+      background: var(--surface2);
+      border-radius: 4px;
+      height: 6px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      border-radius: 4px;
+      transition: width .3s;
+    }
+
+    /* TABLE */
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { color: var(--text-muted); font-weight: 500; text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+    td { padding: 10px 12px; border-bottom: 1px solid rgba(46,51,80,.5); vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(91,106,245,.04); }
+
+    /* MISC */
+    .text-muted { color: var(--text-muted); font-size: 0.85rem; }
+    .mt-1 { margin-top: .5rem; }
+    .mt-2 { margin-top: 1rem; }
+    .mt-3 { margin-top: 1.5rem; }
+    .flex { display: flex; align-items: center; gap: .75rem; }
+    .flex-between { display: flex; align-items: center; justify-content: space-between; }
+    h1 { font-size: 1.5rem; font-weight: 700; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin-bottom: 1rem; }
+    h3 { font-size: 0.95rem; font-weight: 600; }
+
+    /* TOAST */
+    #toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: var(--surface2); border: 1px solid var(--border);
+      padding: 12px 20px; border-radius: var(--radius);
+      font-size: .875rem; opacity: 0; transition: opacity .3s;
+      z-index: 999;
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a class="nav-brand" href="/">EnterpriseCore <span>AI Legal OS</span></a>
+    <a href="/">Missions</a>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:1.25rem;">
+      <a href="/settings" style="color:var(--text-muted);text-decoration:none;font-size:.85rem;">Paramètres</a>
+      {% if session.username %}
+        <span style="color:var(--text-muted);font-size:.8rem;">{{ session.username }}</span>
+        <a href="/logout" style="color:var(--text-muted);text-decoration:none;font-size:.8rem;">Déconnexion</a>
+      {% endif %}
+    </div>
+  </nav>
+
+  <div class="container">
+    {% block content %}{% endblock %}
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+    function showToast(msg, duration=3000) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), duration);
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

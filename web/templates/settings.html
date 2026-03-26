@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Paramètres — EnterpriseCore AI{% endblock %}
+
+{% block content %}
+<div class="flex-between mt-2">
+  <h1>Paramètres</h1>
+</div>
+
+<!-- Clés API -->
+<div class="card mt-3">
+  <div class="flex-between" style="margin-bottom:1rem;">
+    <h2 style="margin:0;">Clés API</h2>
+    <button class="btn btn-primary" onclick="openKeyModal()" style="font-size:.85rem;">+ Nouvelle clé</button>
+  </div>
+  <p class="text-muted" style="font-size:.85rem;margin-bottom:1rem;">
+    Les clés permettent d'accéder à l'API REST (<code>http://localhost:8000</code>).
+    Ajoutez <code>X-API-Key: ec_...</code> dans vos requêtes.
+  </p>
+
+  {% if keys %}
+  <table>
+    <thead>
+      <tr>
+        <th>Nom</th>
+        <th>Préfixe</th>
+        <th>Statut</th>
+        <th>Dernière utilisation</th>
+        <th>Créée</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for k in keys %}
+      <tr>
+        <td><strong>{{ k.name }}</strong></td>
+        <td><code style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:.8rem;">{{ k.key_prefix }}…</code></td>
+        <td>
+          {% if k.active %}
+            <span style="color:var(--low);font-size:.85rem;">● Actif</span>
+          {% else %}
+            <span style="color:var(--unknown);font-size:.85rem;">● Révoqué</span>
+          {% endif %}
+        </td>
+        <td class="text-muted">{{ k.last_used[:16] if k.last_used else '—' }}</td>
+        <td class="text-muted">{{ k.created_at[:16] if k.created_at else '—' }}</td>
+        <td>
+          {% if k.active %}
+          <button class="btn btn-outline" style="padding:3px 10px;font-size:.8rem;color:var(--high);border-color:var(--high);"
+                  onclick="revokeKey({{ k.id }}, '{{ k.name }}')">Révoquer</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="text-muted" style="text-align:center;padding:1.5rem 0;">
+      Aucune clé API. Créez-en une pour utiliser l'API REST.
+    </p>
+  {% endif %}
+</div>
+
+<!-- Infos API REST -->
+<div class="card mt-3">
+  <h2>API REST (FastAPI)</h2>
+  <p class="text-muted" style="font-size:.85rem;margin-bottom:.75rem;">
+    L'API REST est disponible sur le port <strong>8000</strong>.
+  </p>
+  <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
+    <a href="http://localhost:8000/docs" target="_blank" class="btn btn-outline" style="font-size:.85rem;">
+      Swagger UI →
+    </a>
+    <a href="http://localhost:8000/redoc" target="_blank" class="btn btn-outline" style="font-size:.85rem;">
+      ReDoc →
+    </a>
+    <a href="http://localhost:8000/health" target="_blank" class="btn btn-outline" style="font-size:.85rem;">
+      Health check →
+    </a>
+  </div>
+
+  <div style="margin-top:1rem;background:var(--surface2);border-radius:6px;padding:1rem;font-size:.8rem;font-family:monospace;color:var(--text-muted);">
+    <div style="color:var(--text-muted);margin-bottom:.5rem;"># Exemple d'utilisation</div>
+    <div>curl -H <span style="color:var(--low);">"X-API-Key: ec_votre_cle"</span> http://localhost:8000/v1/missions</div>
+  </div>
+</div>
+
+<!-- Modal création clé -->
+<div id="key-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;
+     align-items:center;justify-content:center;" onclick="if(event.target===this)closeKeyModal()">
+  <div class="card" style="width:440px;max-width:95vw;" onclick="event.stopPropagation()">
+    <div class="flex-between" style="margin-bottom:1.5rem;">
+      <h2 style="margin:0;">Nouvelle clé API</h2>
+      <button class="btn btn-outline" style="padding:4px 10px;" onclick="closeKeyModal()">✕</button>
+    </div>
+
+    <div id="key-form">
+      <div class="form-group">
+        <label>Nom de la clé (ex: mon-app, serveur-prod)</label>
+        <input type="text" id="inp-key-name" placeholder="mon-application">
+      </div>
+      <div class="flex" style="justify-content:flex-end;gap:.5rem;margin-top:1rem;">
+        <button class="btn btn-outline" onclick="closeKeyModal()">Annuler</button>
+        <button class="btn btn-primary" onclick="createKey()">Créer</button>
+      </div>
+    </div>
+
+    <div id="key-result" style="display:none;">
+      <p style="color:var(--medium);font-size:.85rem;margin-bottom:.75rem;">
+        ⚠ Copiez cette clé maintenant — elle ne sera plus affichée.
+      </p>
+      <div style="background:var(--surface2);border-radius:6px;padding:.75rem;font-family:monospace;
+           font-size:.85rem;word-break:break-all;border:1px solid var(--accent);" id="key-value">
+      </div>
+      <button class="btn btn-outline mt-2" style="width:100%;" onclick="copyKey()">Copier</button>
+      <button class="btn btn-primary mt-2" style="width:100%;" onclick="closeKeyModalReload()">Fermer</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function openKeyModal()  { document.getElementById('key-modal').style.display = 'flex'; }
+  function closeKeyModal() {
+    document.getElementById('key-modal').style.display = 'none';
+    document.getElementById('key-form').style.display   = 'block';
+    document.getElementById('key-result').style.display = 'none';
+    document.getElementById('inp-key-name').value = '';
+  }
+  function closeKeyModalReload() { closeKeyModal(); location.reload(); }
+
+  function createKey() {
+    const name = document.getElementById('inp-key-name').value.trim();
+    if (!name) { showToast('Nom requis.'); return; }
+
+    fetch('/api/keys/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    })
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('key-form').style.display   = 'none';
+      document.getElementById('key-result').style.display = 'block';
+      document.getElementById('key-value').textContent    = data.key;
+    });
+  }
+
+  function copyKey() {
+    const key = document.getElementById('key-value').textContent;
+    navigator.clipboard.writeText(key).then(() => showToast('Clé copiée !'));
+  }
+
+  function revokeKey(id, name) {
+    if (!confirm(`Révoquer la clé "${name}" ? Cette action est irréversible.`)) return;
+    fetch(`/api/keys/${id}/revoke`, { method: 'POST' })
+      .then(() => location.reload());
+  }
+</script>
+{% endblock %}

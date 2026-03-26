@@ -1,0 +1,31 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+
+# Variables d'environnement (NE JAMAIS COMMITTER)
+.env
+.env.local
+.env.production
+.env.*
+
+# Logs
+*.log
+web/server.log
+web/api.log
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Temp
+scripts/icon_build/
+.pytest_cache/

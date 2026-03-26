@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+{% block title %}Missions — EnterpriseCore AI{% endblock %}
+
+{% block content %}
+<div class="flex-between mt-2">
+  <h1>Missions juridiques</h1>
+  <button class="btn btn-primary" onclick="openModal()">+ Nouvelle mission</button>
+</div>
+
+<!-- Barre de recherche + filtres -->
+<form method="GET" action="/" class="mt-3" style="display:flex;gap:.75rem;align-items:center;">
+  <div style="position:relative;flex:1;max-width:420px;">
+    <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:.85rem;">⌕</span>
+    <input type="text" name="q" value="{{ q }}"
+           placeholder="Rechercher une mission…"
+           style="padding-left:32px;width:100%;"
+           oninput="this.form.submit()">
+  </div>
+  <div style="display:flex;gap:.4rem;">
+    {% for level in ['HIGH','MEDIUM','LOW'] %}
+    <a href="/?q={{ q }}&risk={{ level if risk_filter != level else '' }}"
+       class="badge badge-{{ level }}"
+       style="padding:5px 12px;cursor:pointer;text-decoration:none;opacity:{{ '1' if risk_filter == level else '0.5' }};">
+      {{ level }}
+    </a>
+    {% endfor %}
+    {% if q or risk_filter %}
+    <a href="/" class="btn btn-outline" style="padding:4px 10px;font-size:.8rem;">✕ Reset</a>
+    {% endif %}
+  </div>
+</form>
+
+<!-- Liste des missions -->
+<div class="mt-3">
+  {% if missions %}
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Titre</th>
+          <th>Risque</th>
+          <th>Tâches</th>
+          <th>Statut</th>
+          <th>Date</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in missions %}
+        <tr>
+          <td class="text-muted">{{ m.id }}</td>
+          <td>
+            <strong>{{ m.title }}</strong>
+            <div class="text-muted mt-1" style="max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+              {{ m.objective }}
+            </div>
+          </td>
+          <td>
+            <span class="badge badge-{{ m.final_risk_level or 'UNKNOWN' }}">
+              {{ m.final_risk_level or '—' }}
+            </span>
+          </td>
+          <td>
+            <div>{{ m.completed_tasks }}/{{ m.tasks_count }}</div>
+            <div class="progress-bar" style="width:80px">
+              <div class="progress-fill" style="width:{{ ((m.completed_tasks / m.tasks_count) * 100) | int if m.tasks_count else 0 }}%"></div>
+            </div>
+          </td>
+          <td>
+            <span class="status-dot status-{{ m.status }}"></span>{{ m.status }}
+          </td>
+          <td class="text-muted">{{ m.created_at[:16] }}</td>
+          <td style="white-space:nowrap;">
+            <a href="/mission/{{ m.id }}" class="btn btn-outline" style="padding:4px 12px;font-size:.8rem;">Voir</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="card" style="text-align:center;padding:3rem;">
+      {% if q or risk_filter %}
+        <p class="text-muted">Aucune mission ne correspond à votre recherche.</p>
+        <a href="/" class="btn btn-outline mt-2">Effacer les filtres</a>
+      {% else %}
+        <p class="text-muted">Aucune mission pour l'instant.</p>
+        <button class="btn btn-primary mt-2" onclick="openModal()">Lancer la première mission</button>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     Modal nouvelle mission + progression live (SSE)
+══════════════════════════════════════════════════════════ -->
+<div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;
+     align-items:center;justify-content:center;" onclick="if(event.target===this)closeModal()">
+  <div class="card" style="width:580px;max-width:95vw;" onclick="event.stopPropagation()">
+
+    <!-- Titre modal -->
+    <div class="flex-between" style="margin-bottom:1.5rem;">
+      <h2 style="margin:0" id="modal-title-text">Nouvelle mission</h2>
+      <button class="btn btn-outline" style="padding:4px 10px;" onclick="closeModal()">✕</button>
+    </div>
+
+    <!-- Formulaire -->
+    <div id="modal-form">
+      <div class="form-group">
+        <label>Titre de la mission</label>
+        <input type="text" id="inp-title" placeholder="ex: Audit RGPD — Startup FinTech">
+      </div>
+      <div class="form-group">
+        <label>Objectif (décrivez la situation juridique à analyser)</label>
+        <textarea id="inp-objective" rows="5"
+          placeholder="ex: Une entreprise collecte des données biométriques sans consentement explicite..."></textarea>
+      </div>
+      <div class="flex" style="justify-content:flex-end;gap:.5rem;margin-top:1.5rem;">
+        <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
+        <button class="btn btn-primary" id="btn-launch" onclick="launchMission()">Lancer l'analyse</button>
+      </div>
+    </div>
+
+    <!-- Progression live -->
+    <div id="modal-progress" style="display:none;">
+      <div id="progress-header" style="margin-bottom:1rem;">
+        <div style="font-size:.85rem;color:var(--text-muted);">
+          <span class="status-dot status-running"></span>Analyse en cours…
+        </div>
+        <div class="progress-bar mt-1" style="width:100%;height:8px;">
+          <div class="progress-fill" id="global-bar" style="width:0%;transition:width .5s;"></div>
+        </div>
+      </div>
+      <div id="task-list" style="display:flex;flex-direction:column;gap:.5rem;max-height:240px;overflow-y:auto;"></div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.getElementById('modal').style.display = 'none';
+
+  function openModal() {
+    document.getElementById('modal').style.display = 'flex';
+    document.getElementById('inp-title').focus();
+  }
+
+  function closeModal() {
+    if (window._sseSource) { window._sseSource.close(); window._sseSource = null; }
+    document.getElementById('modal').style.display = 'none';
+    // Réinitialiser
+    document.getElementById('modal-form').style.display = 'block';
+    document.getElementById('modal-progress').style.display = 'none';
+    document.getElementById('modal-title-text').textContent = 'Nouvelle mission';
+    document.getElementById('task-list').innerHTML = '';
+    document.getElementById('global-bar').style.width = '0%';
+    document.getElementById('btn-launch').disabled = false;
+    document.getElementById('btn-launch').textContent = "Lancer l'analyse";
+  }
+
+  function launchMission() {
+    const title     = document.getElementById('inp-title').value.trim();
+    const objective = document.getElementById('inp-objective').value.trim();
+    if (!title || !objective) { showToast('Veuillez remplir le titre et l\'objectif.'); return; }
+
+    document.getElementById('btn-launch').disabled = true;
+    document.getElementById('modal-form').style.display = 'none';
+    document.getElementById('modal-progress').style.display = 'block';
+    document.getElementById('modal-title-text').textContent = title;
+
+    fetch('/api/mission/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, objective })
+    })
+    .then(r => r.json())
+    .then(data => subscribeSSE(data.run_id))
+    .catch(() => { showToast('Erreur lors du lancement.'); closeModal(); });
+  }
+
+  function subscribeSSE(runId) {
+    const src = new EventSource('/api/mission/events/' + runId);
+    window._sseSource = src;
+    let totalTasks = 0;
+
+    src.onmessage = function(e) {
+      const event = JSON.parse(e.data);
+
+      if (event.type === 'planned') {
+        totalTasks = event.tasks_count;
+        const list = document.getElementById('task-list');
+        list.innerHTML = '';
+        event.tasks.forEach(t => {
+          const el = document.createElement('div');
+          el.id = 'task-' + t.order;
+          el.style.cssText = 'display:flex;align-items:center;gap:.75rem;padding:8px 10px;border-radius:6px;background:var(--surface2);font-size:.85rem;';
+          el.innerHTML = `
+            <span id="icon-${t.order}" style="width:16px;text-align:center;flex-shrink:0;">○</span>
+            <span style="flex:1;">${t.title}</span>
+            <span class="agent-badge">${t.agent_type}</span>
+          `;
+          list.appendChild(el);
+        });
+      }
+
+      if (event.type === 'task_start') {
+        const icon = document.getElementById('icon-' + event.order);
+        if (icon) icon.innerHTML = '<span class="status-dot status-running" style="margin:0;"></span>';
+        const el = document.getElementById('task-' + event.order);
+        if (el) el.style.borderLeft = '2px solid var(--accent)';
+      }
+
+      if (event.type === 'task_done') {
+        const icon = document.getElementById('icon-' + event.order);
+        const el   = document.getElementById('task-' + event.order);
+        if (icon) {
+          const risk = event.risk_level;
+          const col  = risk === 'HIGH' ? 'var(--high)' : risk === 'MEDIUM' ? 'var(--medium)' : risk === 'LOW' ? 'var(--low)' : 'var(--text-muted)';
+          icon.innerHTML = `<span style="color:${col};">✓</span>`;
+        }
+        if (el) {
+          el.style.borderLeft = '2px solid var(--low)';
+          if (event.risk_level) {
+            const badge = el.querySelector('.agent-badge');
+            if (badge) badge.insertAdjacentHTML('beforebegin',
+              `<span class="badge badge-${event.risk_level}" style="font-size:.7rem;">${event.risk_level}</span>`);
+          }
+        }
+        if (totalTasks > 0) {
+          document.getElementById('global-bar').style.width = ((event.order / totalTasks) * 100) + '%';
+        }
+      }
+
+      if (event.type === 'mission_done') {
+        document.getElementById('global-bar').style.width = '100%';
+        src.close();
+        setTimeout(() => {
+          showToast('Mission terminée !');
+          closeModal();
+          location.reload();
+        }, 800);
+      }
+
+      if (event.type === 'mission_error') {
+        src.close();
+        showToast('Erreur : ' + (event.error || 'inconnue'));
+        closeModal();
+      }
+    };
+
+    src.onerror = function() { src.close(); };
+  }
+</script>
+{% endblock %}
