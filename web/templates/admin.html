@@ -1,0 +1,351 @@
+{% extends "base.html" %}
+{% block title %}Administration — EnterpriseCore AI{% endblock %}
+
+{% block content %}
+<div class="flex-between mt-2">
+  <div>
+    <h1>Administration</h1>
+    <p class="text-muted mt-1">Gestion des utilisateurs et des accès</p>
+  </div>
+  <button class="btn btn-primary" onclick="openCreateModal()">+ Nouvel utilisateur</button>
+</div>
+
+<!-- Stats rapides -->
+<div class="mt-3" style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;">
+  {% set counts = {"admin": 0, "manager": 0, "user": 0} %}
+  {% for u in users %}{% if u.role in counts %}{% set _ = counts.update({u.role: counts[u.role]+1}) %}{% endif %}{% endfor %}
+
+  <div class="card" style="text-align:center;border-top:3px solid #ef4444;">
+    <div style="font-size:2rem;font-weight:700;color:#ef4444;">{{ counts.admin }}</div>
+    <div class="text-muted" style="font-size:.8rem;">Administrateur{{ 's' if counts.admin != 1 }}</div>
+  </div>
+  <div class="card" style="text-align:center;border-top:3px solid #f59e0b;">
+    <div style="font-size:2rem;font-weight:700;color:#f59e0b;">{{ counts.manager }}</div>
+    <div class="text-muted" style="font-size:.8rem;">Manager{{ 's' if counts.manager != 1 }}</div>
+  </div>
+  <div class="card" style="text-align:center;border-top:3px solid #22c55e;">
+    <div style="font-size:2rem;font-weight:700;color:#22c55e;">{{ counts.user }}</div>
+    <div class="text-muted" style="font-size:.8rem;">Utilisateur{{ 's' if counts.user != 1 }}</div>
+  </div>
+  <div class="card" style="text-align:center;border-top:3px solid var(--accent);">
+    <div style="font-size:2rem;font-weight:700;color:var(--accent);">{{ users|length }}</div>
+    <div class="text-muted" style="font-size:.8rem;">Total</div>
+  </div>
+</div>
+
+<!-- Tableau utilisateurs -->
+<div class="card mt-3">
+  <h2>Utilisateurs</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Utilisateur</th>
+        <th>Rôle</th>
+        <th>Accès services</th>
+        <th>Statut</th>
+        <th>Créé</th>
+        <th style="text-align:right;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      {% set role_info = roles[u.role] if u.role in roles else {"label": u.role, "color": "#64748b"} %}
+      <tr>
+        <td>
+          <strong>{{ u.username }}</strong>
+          {% if u.id == session.user_id %}
+            <span style="font-size:.72rem;color:var(--accent);margin-left:6px;">(vous)</span>
+          {% endif %}
+        </td>
+        <td>
+          <span class="agent-badge" style="background:{{ role_info.color }}22;color:{{ role_info.color }};border-color:{{ role_info.color }}44;">
+            {{ role_info.label }}
+          </span>
+        </td>
+        <td>
+          {% if u.role in ("admin","manager") %}
+            <span style="color:var(--low);font-size:.82rem;">● Tous les services</span>
+          {% elif u.permissions %}
+            <div style="display:flex;flex-wrap:wrap;gap:4px;">
+              {% for svc in u.permissions %}
+                <span class="agent-badge" style="font-size:.7rem;">{{ service_labels.get(svc, svc) }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <span class="text-muted" style="font-size:.82rem;">Aucun accès</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if u.is_active %}
+            <span style="color:var(--low);font-size:.85rem;">● Actif</span>
+          {% else %}
+            <span style="color:var(--high);font-size:.85rem;">● Désactivé</span>
+          {% endif %}
+        </td>
+        <td class="text-muted">{{ u.created_at[:10] }}</td>
+        <td style="text-align:right;white-space:nowrap;">
+          <button class="btn btn-outline" style="padding:3px 10px;font-size:.78rem;"
+                  onclick='openEditModal({{ u|tojson }})'>Modifier</button>
+          {% if u.id != session.user_id %}
+          <button class="btn btn-outline" style="padding:3px 10px;font-size:.78rem;margin-left:4px;
+                  color:{{ 'var(--high)' if u.is_active else 'var(--low)' }};"
+                  onclick="toggleUser({{ u.id }}, '{{ u.username }}', {{ u.is_active }})">
+            {{ 'Désactiver' if u.is_active else 'Activer' }}
+          </button>
+          <button class="btn btn-outline" style="padding:3px 10px;font-size:.78rem;margin-left:4px;color:var(--high);border-color:var(--high);"
+                  onclick="deleteUser({{ u.id }}, '{{ u.username }}')">Supprimer</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Légende des rôles -->
+<div class="card mt-3" style="padding:1rem;">
+  <div class="text-muted" style="font-size:.78rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.75rem;">
+    Rôles disponibles
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;">
+    {% for key, info in roles.items() %}
+    <div style="padding:.75rem;border-radius:8px;border-left:3px solid {{ info.color }};background:var(--surface2);">
+      <div style="font-weight:600;color:{{ info.color }};font-size:.9rem;">{{ info.label }}</div>
+      <div class="text-muted mt-1" style="font-size:.78rem;">{{ info.desc }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+
+<!-- ════════════ MODAL CRÉER ════════════ -->
+<div id="create-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);
+     z-index:100;align-items:center;justify-content:center;" onclick="if(event.target===this)closeCreateModal()">
+  <div class="card" style="width:540px;max-width:95vw;max-height:90vh;overflow-y:auto;" onclick="event.stopPropagation()">
+    <div class="flex-between" style="margin-bottom:1.5rem;">
+      <h2 style="margin:0;">Nouvel utilisateur</h2>
+      <button class="btn btn-outline" style="padding:4px 10px;" onclick="closeCreateModal()">✕</button>
+    </div>
+
+    <div class="form-group">
+      <label>Nom d'utilisateur</label>
+      <input type="text" id="c-username" placeholder="ex: marie.dupont">
+    </div>
+    <div class="form-group">
+      <label>Mot de passe</label>
+      <input type="password" id="c-password" placeholder="Minimum 8 caractères">
+    </div>
+    <div class="form-group">
+      <label>Rôle</label>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;">
+        {% for key, info in roles.items() %}
+        <label style="cursor:pointer;padding:.6rem;border-radius:6px;border:1px solid var(--border);
+               display:flex;flex-direction:column;gap:.25rem;"
+               onclick="selectRole('{{ key }}', this)">
+          <div style="display:flex;align-items:center;gap:.4rem;">
+            <input type="radio" name="c-role" value="{{ key }}" {% if key == 'user' %}checked{% endif %}
+                   style="width:auto;" onchange="updatePermVis()">
+            <span style="font-weight:600;font-size:.85rem;color:{{ info.color }};">{{ info.label }}</span>
+          </div>
+          <span style="font-size:.72rem;color:var(--text-muted);">{{ info.desc }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div id="c-perms-section">
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Accès aux services</label>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.4rem;margin-top:.4rem;">
+          {% for svc in all_services %}
+          <label style="display:flex;align-items:center;gap:.5rem;padding:.5rem;
+                 border-radius:6px;cursor:pointer;background:var(--surface2);font-size:.85rem;">
+            <input type="checkbox" name="c-perm" value="{{ svc }}" style="width:auto;">
+            {{ service_labels[svc] }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:1.5rem;">
+      <button class="btn btn-outline" onclick="closeCreateModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="createUser()">Créer l'utilisateur</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ════════════ MODAL MODIFIER ════════════ -->
+<div id="edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);
+     z-index:100;align-items:center;justify-content:center;" onclick="if(event.target===this)closeEditModal()">
+  <div class="card" style="width:540px;max-width:95vw;max-height:90vh;overflow-y:auto;" onclick="event.stopPropagation()">
+    <div class="flex-between" style="margin-bottom:1.5rem;">
+      <h2 style="margin:0;">Modifier <span id="e-username-title"></span></h2>
+      <button class="btn btn-outline" style="padding:4px 10px;" onclick="closeEditModal()">✕</button>
+    </div>
+    <input type="hidden" id="e-user-id">
+
+    <div class="form-group">
+      <label>Rôle</label>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;">
+        {% for key, info in roles.items() %}
+        <label style="cursor:pointer;padding:.6rem;border-radius:6px;border:1px solid var(--border);
+               display:flex;flex-direction:column;gap:.25rem;">
+          <div style="display:flex;align-items:center;gap:.4rem;">
+            <input type="radio" name="e-role" value="{{ key }}" style="width:auto;" onchange="updateEditPermVis()">
+            <span style="font-weight:600;font-size:.85rem;color:{{ info.color }};">{{ info.label }}</span>
+          </div>
+          <span style="font-size:.72rem;color:var(--text-muted);">{{ info.desc }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div id="e-perms-section">
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Accès aux services</label>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.4rem;margin-top:.4rem;">
+          {% for svc in all_services %}
+          <label style="display:flex;align-items:center;gap:.5rem;padding:.5rem;
+                 border-radius:6px;cursor:pointer;background:var(--surface2);font-size:.85rem;">
+            <input type="checkbox" name="e-perm" value="{{ svc }}" style="width:auto;">
+            {{ service_labels[svc] }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="form-group mt-2">
+      <label>Nouveau mot de passe <span class="text-muted">(laisser vide pour ne pas changer)</span></label>
+      <input type="password" id="e-password" placeholder="Nouveau mot de passe">
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:1.5rem;">
+      <button class="btn btn-outline" onclick="closeEditModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="saveUser()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+
+{% block scripts %}
+<script>
+  const ALL_SERVICES = {{ all_services | tojson }};
+
+  // ── Create modal ──────────────────────────────
+  function openCreateModal() {
+    document.getElementById('create-modal').style.display = 'flex';
+    updatePermVis();
+  }
+  function closeCreateModal() {
+    document.getElementById('create-modal').style.display = 'none';
+  }
+
+  function updatePermVis() {
+    const role = document.querySelector('input[name="c-role"]:checked')?.value || 'user';
+    document.getElementById('c-perms-section').style.display = role === 'user' ? 'block' : 'none';
+  }
+
+  function createUser() {
+    const username = document.getElementById('c-username').value.trim();
+    const password = document.getElementById('c-password').value.trim();
+    const role     = document.querySelector('input[name="c-role"]:checked')?.value || 'user';
+    const perms    = role === 'user'
+      ? [...document.querySelectorAll('input[name="c-perm"]:checked')].map(el => el.value)
+      : [];
+
+    if (!username || !password) { showToast('Nom et mot de passe requis.'); return; }
+
+    fetch('/api/admin/users/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, role, permissions: perms })
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) { showToast('Erreur : ' + d.error); return; }
+      showToast('Utilisateur créé !');
+      closeCreateModal();
+      setTimeout(() => location.reload(), 800);
+    });
+  }
+
+  // ── Edit modal ────────────────────────────────
+  function openEditModal(user) {
+    document.getElementById('edit-modal').style.display = 'flex';
+    document.getElementById('e-user-id').value = user.id;
+    document.getElementById('e-username-title').textContent = user.username;
+    document.getElementById('e-password').value = '';
+
+    // Sélectionner le rôle
+    document.querySelectorAll('input[name="e-role"]').forEach(el => {
+      el.checked = el.value === user.role;
+    });
+
+    // Cocher les permissions
+    const perms = user.permissions || [];
+    document.querySelectorAll('input[name="e-perm"]').forEach(el => {
+      el.checked = perms.includes(el.value);
+    });
+
+    updateEditPermVis();
+  }
+  function closeEditModal() {
+    document.getElementById('edit-modal').style.display = 'none';
+  }
+
+  function updateEditPermVis() {
+    const role = document.querySelector('input[name="e-role"]:checked')?.value || 'user';
+    document.getElementById('e-perms-section').style.display = role === 'user' ? 'block' : 'none';
+  }
+
+  function saveUser() {
+    const id   = document.getElementById('e-user-id').value;
+    const role = document.querySelector('input[name="e-role"]:checked')?.value;
+    const perms = role === 'user'
+      ? [...document.querySelectorAll('input[name="e-perm"]:checked')].map(el => el.value)
+      : [];
+    const pwd = document.getElementById('e-password').value.trim() || null;
+
+    fetch(`/api/admin/users/${id}/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role, permissions: perms, password: pwd })
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) { showToast('Erreur : ' + d.error); return; }
+      showToast('Modifications enregistrées !');
+      closeEditModal();
+      setTimeout(() => location.reload(), 800);
+    });
+  }
+
+  // ── Toggle / Delete ───────────────────────────
+  function toggleUser(id, username, isActive) {
+    const action = isActive ? 'désactiver' : 'activer';
+    if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} le compte de "${username}" ?`)) return;
+    fetch(`/api/admin/users/${id}/toggle`, { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) { showToast('Erreur : ' + d.error); return; }
+      showToast(d.is_active ? 'Compte activé.' : 'Compte désactivé.');
+      setTimeout(() => location.reload(), 600);
+    });
+  }
+
+  function deleteUser(id, username) {
+    if (!confirm(`Supprimer définitivement "${username}" ? Cette action est irréversible.`)) return;
+    fetch(`/api/admin/users/${id}/delete`, { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) { showToast('Erreur : ' + d.error); return; }
+      showToast('Utilisateur supprimé.');
+      setTimeout(() => location.reload(), 600);
+    });
+  }
+</script>
+{% endblock %}

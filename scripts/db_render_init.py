@@ -85,10 +85,79 @@ def create_admin():
         print("[db_init] API keys already present.")
 
 
+def migrate_rbac():
+    """Ajoute les colonnes RBAC si elles n'existent pas encore."""
+    conn   = get_connection()
+    cursor = conn.cursor()
+    for col_sql in [
+        "ALTER TABLE users ADD COLUMN permissions JSON DEFAULT NULL",
+        "ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1",
+    ]:
+        try:
+            cursor.execute(col_sql)
+            conn.commit()
+        except Exception as e:
+            if "Duplicate column" not in str(e) and "1060" not in str(e):
+                print(f"[db_init] migrate_rbac warning: {e}")
+    cursor.close()
+    conn.close()
+
+
+def migrate_service_queries():
+    """Crée la table service_queries si elle n'existe pas."""
+    conn   = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS service_queries (
+                id             INT AUTO_INCREMENT PRIMARY KEY,
+                service        VARCHAR(50) NOT NULL,
+                agent_slug     VARCHAR(50) NOT NULL,
+                question       TEXT        NOT NULL,
+                result         JSON,
+                priority_level VARCHAR(10),
+                confidence     FLOAT,
+                created_at     TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_service_agent (service, agent_slug)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        conn.commit()
+    except Exception as e:
+        print(f"[db_init] migrate_service_queries warning: {e}")
+    cursor.close()
+    conn.close()
+
+
+def migrate_agent_queries():
+    """Crée la table agent_queries (Service Juridique) si elle n'existe pas."""
+    conn   = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_queries (
+                id         INT AUTO_INCREMENT PRIMARY KEY,
+                agent_role VARCHAR(20)  NOT NULL,
+                question   TEXT         NOT NULL,
+                result     JSON,
+                risk_level VARCHAR(10),
+                confidence FLOAT,
+                created_at TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        conn.commit()
+    except Exception as e:
+        print(f"[db_init] migrate_agent_queries warning: {e}")
+    cursor.close()
+    conn.close()
+
+
 if __name__ == "__main__":
     print("[db_init] Initializing database...")
     try:
         run_schema()
+        migrate_rbac()
+        migrate_service_queries()
+        migrate_agent_queries()
         create_admin()
         print("[db_init] Done.")
     except Exception as e:

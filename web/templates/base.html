@@ -238,6 +238,9 @@
       </div>
     </div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:1.25rem;">
+      {% if session.role == 'admin' %}
+        <a href="/admin" style="color:var(--accent);text-decoration:none;font-size:.85rem;font-weight:600;">Admin</a>
+      {% endif %}
       <a href="/settings" style="color:var(--text-muted);text-decoration:none;font-size:.85rem;">Paramètres</a>
       {% if session.username %}
         <span style="color:var(--text-muted);font-size:.8rem;">{{ session.username }}</span>

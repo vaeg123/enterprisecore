@@ -14,7 +14,12 @@ from core.agents.specialized_legal_agent import SpecializedLegalAgent, AGENT_PER
 from core.agents.service_agent import ServiceAgent
 from core.agents.services_config import SERVICES, list_services
 from web.pdf_generator import generate_mission_pdf
-from web.flask_auth import login_required, check_password, get_user
+from web.flask_auth import (
+    login_required, admin_required, service_required,
+    check_password, get_user, get_user_by_id, get_all_users,
+    create_user, update_user, toggle_user_active, delete_user,
+    has_service_access, ALL_SERVICES, ROLES, SERVICE_LABELS,
+)
 from api.auth import generate_api_key, save_key, get_all_keys, deactivate_key
 
 # Mapping slug URL → clé de rôle interne
@@ -52,9 +57,15 @@ def login():
         user     = get_user(username)
 
         if user and check_password(password, user["password_hash"]):
-            session["user_id"]   = user["id"]
-            session["username"]  = user["username"]
-            return redirect(next_url)
+            if not user.get("is_active", 1):
+                error = "Ce compte est désactivé. Contactez l'administrateur."
+            else:
+                session["user_id"]     = user["id"]
+                session["username"]    = user["username"]
+                session["role"]        = user.get("role", "user")
+                session["permissions"] = user.get("permissions") or []
+                session["is_active"]   = True
+                return redirect(next_url)
         else:
             error = "Identifiant ou mot de passe incorrect."
 
@@ -65,6 +76,77 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+# ─────────────────────────────────────────────────────────────
+# Admin — Gestion des utilisateurs
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/admin")
+@admin_required
+def admin():
+    users = get_all_users()
+    return render_template("admin.html", users=users,
+                           roles=ROLES, all_services=ALL_SERVICES,
+                           service_labels=SERVICE_LABELS)
+
+
+@app.route("/api/admin/users/create", methods=["POST"])
+@admin_required
+def api_admin_create_user():
+    data     = request.get_json()
+    username = (data.get("username") or "").strip()
+    password = (data.get("password") or "").strip()
+    role     = (data.get("role") or "user").strip()
+    perms    = data.get("permissions") or []
+
+    if not username or not password:
+        return jsonify({"error": "username et password requis"}), 400
+    if role not in ROLES:
+        return jsonify({"error": "rôle invalide"}), 400
+    if get_user(username):
+        return jsonify({"error": "Ce nom d'utilisateur existe déjà"}), 409
+    try:
+        uid = create_user(username, password, role, perms)
+        return jsonify({"ok": True, "id": uid})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/admin/users/<int:user_id>/update", methods=["POST"])
+@admin_required
+def api_admin_update_user(user_id):
+    data  = request.get_json()
+    role  = data.get("role")
+    perms = data.get("permissions")
+    pwd   = (data.get("password") or "").strip() or None
+
+    if role and role not in ROLES:
+        return jsonify({"error": "rôle invalide"}), 400
+    try:
+        update_user(user_id, role=role, permissions=perms, password=pwd)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/admin/users/<int:user_id>/toggle", methods=["POST"])
+@admin_required
+def api_admin_toggle_user(user_id):
+    if user_id == session.get("user_id"):
+        return jsonify({"error": "Vous ne pouvez pas désactiver votre propre compte"}), 400
+    toggle_user_active(user_id)
+    user = get_user_by_id(user_id)
+    return jsonify({"ok": True, "is_active": user["is_active"]})
+
+
+@app.route("/api/admin/users/<int:user_id>/delete", methods=["POST"])
+@admin_required
+def api_admin_delete_user(user_id):
+    if user_id == session.get("user_id"):
+        return jsonify({"error": "Vous ne pouvez pas supprimer votre propre compte"}), 400
+    delete_user(user_id)
+    return jsonify({"ok": True})
 
 
 # ─────────────────────────────────────────────────────────────
@@ -97,6 +179,8 @@ def mission_detail(mission_id):
 @app.route("/services/<service_key>")
 @login_required
 def service_hub(service_key):
+    if not has_service_access(service_key):
+        return render_template("403.html"), 403
     service = SERVICES.get(service_key)
     if not service:
         return redirect(url_for("index"))
@@ -117,6 +201,8 @@ def service_hub(service_key):
 @app.route("/services/<service_key>/<agent_slug>")
 @login_required
 def service_agent_espace(service_key, agent_slug):
+    if not has_service_access(service_key):
+        return render_template("403.html"), 403
     service = SERVICES.get(service_key)
     if not service or agent_slug == "reunion":
         return redirect(url_for("service_hub", service_key=service_key))
@@ -133,6 +219,8 @@ def service_agent_espace(service_key, agent_slug):
 @app.route("/services/<service_key>/reunion")
 @login_required
 def service_reunion(service_key):
+    if not has_service_access(service_key):
+        return render_template("403.html"), 403
     service = SERVICES.get(service_key)
     if not service:
         return redirect(url_for("index"))
@@ -185,7 +273,7 @@ def api_service_ask(service_key, agent_slug):
 
 
 @app.route("/service-juridique")
-@login_required
+@service_required("juridique")
 def service_juridique():
     agents_info = []
     for slug, role in AGENT_SLUGS.items():
@@ -196,7 +284,7 @@ def service_juridique():
 
 
 @app.route("/service-juridique/<agent_slug>")
-@login_required
+@service_required("juridique")
 def agent_espace(agent_slug):
     role = AGENT_SLUGS.get(agent_slug)
     if not role:
@@ -211,7 +299,7 @@ def agent_espace(agent_slug):
 
 
 @app.route("/service-juridique/salle-de-reunion")
-@login_required
+@service_required("juridique")
 def salle_reunion():
     missions = _search_missions()
     return render_template("salle_reunion.html", missions=missions, agents=AGENT_SLUGS)
