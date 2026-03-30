@@ -318,4 +318,21 @@ CREATE TABLE IF NOT EXISTS `agent_queries` (
   KEY `agent_role` (`agent_role`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+--
+-- Table pour les interrogations directes aux agents de tous les services métier
+--
+
+CREATE TABLE IF NOT EXISTS `service_queries` (
+  `id`             int          NOT NULL AUTO_INCREMENT,
+  `service`        varchar(50)  NOT NULL,
+  `agent_slug`     varchar(50)  NOT NULL,
+  `question`       text         NOT NULL,
+  `result`         json         DEFAULT NULL,
+  `priority_level` varchar(10)  DEFAULT NULL,
+  `confidence`     float        DEFAULT NULL,
+  `created_at`     timestamp    NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_service_agent` (`service`, `agent_slug`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- Dump completed on 2026-03-26 10:37:51

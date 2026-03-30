@@ -51,6 +51,31 @@
     nav a { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
     nav a:hover { color: var(--text); }
 
+    /* Dropdown Services */
+    .nav-dropdown { position: relative; }
+    .nav-dropdown-btn {
+      color: var(--text-muted); font-size: 0.9rem; cursor: pointer;
+      background: none; border: none; padding: 0; font-family: inherit;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .nav-dropdown-btn:hover { color: var(--text); }
+    .nav-dropdown-menu {
+      display: none; position: absolute; top: calc(100% + 12px); left: 0;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 6px; min-width: 220px;
+      z-index: 200; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+    }
+    .nav-dropdown:hover .nav-dropdown-menu { display: block; }
+    .nav-dropdown-menu a {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; border-radius: 6px; font-size: .85rem;
+      color: var(--text-muted); text-decoration: none;
+    }
+    .nav-dropdown-menu a:hover { background: var(--surface2); color: var(--text); }
+    .nav-dropdown-menu .divider {
+      height: 1px; background: var(--border); margin: 4px 0;
+    }
+
     /* LAYOUT */
     .container { max-width: 1100px; margin: 0 auto; padding: 2rem; }
 
@@ -191,7 +216,27 @@
   <nav>
     <a class="nav-brand" href="/">EnterpriseCore <span>AI Legal OS</span></a>
     <a href="/">Missions</a>
-    <a href="/service-juridique">Service Juridique</a>
+    <div class="nav-dropdown">
+      <button class="nav-dropdown-btn">Services ▾</button>
+      <div class="nav-dropdown-menu">
+        <a href="/service-juridique">
+          <span style="color:#5b6af5;">⚖</span> Service Juridique
+        </a>
+        <div class="divider"></div>
+        <a href="/services/commercial">
+          <span style="color:#06b6d4;">◉</span> Service Commercial
+        </a>
+        <a href="/services/financier">
+          <span style="color:#10b981;">◈</span> Service Financier
+        </a>
+        <a href="/services/projets">
+          <span style="color:#f97316;">◇</span> Gestion de Projets
+        </a>
+        <a href="/services/rd">
+          <span style="color:#a855f7;">◆</span> Recherche &amp; Développement
+        </a>
+      </div>
+    </div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:1.25rem;">
       <a href="/settings" style="color:var(--text-muted);text-decoration:none;font-size:.85rem;">Paramètres</a>
       {% if session.username %}

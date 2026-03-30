@@ -11,6 +11,8 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for, R
 from database.db_config import get_connection
 from core.planning.mission_orchestrator import MissionOrchestrator
 from core.agents.specialized_legal_agent import SpecializedLegalAgent, AGENT_PERSONAS
+from core.agents.service_agent import ServiceAgent
+from core.agents.services_config import SERVICES, list_services
 from web.pdf_generator import generate_mission_pdf
 from web.flask_auth import login_required, check_password, get_user
 from api.auth import generate_api_key, save_key, get_all_keys, deactivate_key
@@ -86,6 +88,100 @@ def mission_detail(mission_id):
         return redirect(url_for("index"))
     tasks = _get_tasks(mission_id)
     return render_template("mission_detail.html", mission=mission, tasks=tasks)
+
+
+# ─────────────────────────────────────────────────────────────
+# Services métier génériques (Commercial, Financier, Projets, R&D)
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/services/<service_key>")
+@login_required
+def service_hub(service_key):
+    service = SERVICES.get(service_key)
+    if not service:
+        return redirect(url_for("index"))
+    agents_info = []
+    for slug, cfg in service["agents"].items():
+        count = _count_service_queries(service_key, slug)
+        agents_info.append({
+            "slug":     slug,
+            "name":     cfg["name"],
+            "icon":     cfg["icon"],
+            "subtitle": cfg["subtitle"],
+            "count":    count,
+        })
+    return render_template("service_hub.html",
+                           service=service, service_key=service_key, agents=agents_info)
+
+
+@app.route("/services/<service_key>/<agent_slug>")
+@login_required
+def service_agent_espace(service_key, agent_slug):
+    service = SERVICES.get(service_key)
+    if not service or agent_slug == "reunion":
+        return redirect(url_for("service_hub", service_key=service_key))
+    agent_cfg = service["agents"].get(agent_slug)
+    if not agent_cfg:
+        return redirect(url_for("service_hub", service_key=service_key))
+    analyses = _get_service_queries(service_key, agent_slug)
+    return render_template("service_agent_espace.html",
+                           service=service, service_key=service_key,
+                           agent=agent_cfg, agent_slug=agent_slug,
+                           analyses=analyses)
+
+
+@app.route("/services/<service_key>/reunion")
+@login_required
+def service_reunion(service_key):
+    service = SERVICES.get(service_key)
+    if not service:
+        return redirect(url_for("index"))
+    agents_info = []
+    for slug, cfg in service["agents"].items():
+        recent = _get_service_queries(service_key, slug, limit=5)
+        agents_info.append({
+            "slug":   slug,
+            "name":   cfg["name"],
+            "icon":   cfg["icon"],
+            "count":  _count_service_queries(service_key, slug),
+            "recent": recent,
+        })
+    return render_template("service_salle_reunion.html",
+                           service=service, service_key=service_key, agents=agents_info)
+
+
+@app.route("/api/services/<service_key>/<agent_slug>/ask", methods=["POST"])
+@login_required
+def api_service_ask(service_key, agent_slug):
+    service = SERVICES.get(service_key)
+    if not service or not service["agents"].get(agent_slug):
+        return jsonify({"error": "Agent inconnu"}), 404
+
+    data     = request.get_json()
+    question = (data.get("question") or "").strip()
+    if not question:
+        return jsonify({"error": "question requise"}), 400
+
+    try:
+        agent    = ServiceAgent(service_key, agent_slug)
+        response = agent.analyze(question)
+
+        content = response.content.strip()
+        if content.startswith("```"):
+            content = content.split("```", 2)[1]
+            if content.startswith("json"):
+                content = content[4:]
+            content = content.rsplit("```", 1)[0].strip()
+
+        parsed         = json.loads(content)
+        priority_level = parsed.get("priority_level")
+        confidence     = float(parsed.get("confidence", 0))
+
+        _save_service_query(service_key, agent_slug, question, parsed, priority_level, confidence)
+        return jsonify({"ok": True, "result": parsed})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/service-juridique")
@@ -392,6 +488,55 @@ def _get_tasks(mission_id: int) -> list:
             except Exception:
                 pass
     return rows
+
+
+def _save_service_query(service: str, agent_slug: str, question: str,
+                        result: dict, priority_level: str, confidence: float):
+    conn   = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO service_queries (service, agent_slug, question, result, priority_level, confidence) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (service, agent_slug, question, json.dumps(result, ensure_ascii=False), priority_level, confidence)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def _get_service_queries(service: str, agent_slug: str, limit: int = 50) -> list:
+    conn   = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(
+        "SELECT id, question, result, priority_level, confidence, created_at "
+        "FROM service_queries WHERE service=%s AND agent_slug=%s "
+        "ORDER BY created_at DESC LIMIT %s",
+        (service, agent_slug, limit)
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    for r in rows:
+        r["created_at"] = str(r["created_at"])
+        if r.get("result"):
+            try:
+                r["result"] = json.loads(r["result"])
+            except Exception:
+                pass
+    return rows
+
+
+def _count_service_queries(service: str, agent_slug: str) -> int:
+    conn   = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) FROM service_queries WHERE service=%s AND agent_slug=%s",
+        (service, agent_slug)
+    )
+    count = cursor.fetchone()[0]
+    cursor.close()
+    conn.close()
+    return count
 
 
 def _save_agent_query(role: str, question: str, result: dict, risk_level: str, confidence: float):

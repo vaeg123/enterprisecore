@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}{{ agent.name }} — {{ service.name }}{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div class="mt-2" style="font-size:.85rem;">
+  <a href="/services/{{ service_key }}" class="text-muted" style="text-decoration:none;">
+    ← {{ service.name }}
+  </a>
+</div>
+
+<!-- En-tête agent -->
+<div class="card mt-2"
+     style="border-left:4px solid {{ service.color }};
+            background:linear-gradient(135deg,var(--surface),var(--surface2));">
+  <div class="flex" style="gap:1.25rem;align-items:center;">
+    <div style="font-size:3rem;line-height:1;color:{{ service.color }};">{{ agent.icon }}</div>
+    <div style="flex:1;">
+      <h1 style="color:{{ service.color }};">{{ agent.name }}</h1>
+      <div class="text-muted mt-1">{{ agent.subtitle }}</div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:1.8rem;font-weight:700;color:{{ service.color }};">{{ analyses|length }}</div>
+      <div class="text-muted" style="font-size:.78rem;">analyse{{ 's' if analyses|length != 1 }}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Formulaire d'interrogation -->
+<div class="card mt-3">
+  <h2>Poser une question à {{ agent.name.split(' — ')[0] }}</h2>
+  <div class="form-group" style="margin-bottom:0;">
+    <textarea id="inp-question" rows="4"
+      placeholder="Décrivez la situation à analyser…"></textarea>
+  </div>
+  <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem;">
+    <button class="btn btn-primary" id="btn-ask" onclick="askAgent()">
+      Analyser →
+    </button>
+  </div>
+  <div id="result-zone" style="display:none;margin-top:1.5rem;"></div>
+</div>
+
+<!-- Historique -->
+<div class="card mt-3">
+  <h2>Historique des analyses</h2>
+
+  {% if analyses %}
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Question</th>
+        <th>Priorité</th>
+        <th>Confiance</th>
+        <th>Date</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in analyses %}
+      <tr onclick="toggleAnalysis({{ a.id }})" style="cursor:pointer;">
+        <td class="text-muted">{{ a.id }}</td>
+        <td style="max-width:420px;">
+          <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:400px;">
+            {{ a.question }}
+          </div>
+        </td>
+        <td>
+          {% if a.priority_level %}
+            <span class="badge badge-{{ a.priority_level }}">{{ a.priority_level }}</span>
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td>
+          {% if a.confidence %}
+            <div style="font-size:.85rem;">{{ (a.confidence * 100)|int }}%</div>
+            <div class="progress-bar" style="width:58px;margin-top:4px;">
+              <div class="progress-fill" style="width:{{ (a.confidence * 100)|int }}%"></div>
+            </div>
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td class="text-muted">{{ a.created_at[:16] }}</td>
+      </tr>
+
+      {% if a.result %}
+      <tr id="analysis-{{ a.id }}" style="display:none;">
+        <td colspan="5" style="padding:0;">
+          <div style="background:var(--surface2);border-radius:8px;padding:1.25rem;
+               margin:0 8px 10px;font-size:.85rem;line-height:1.75;
+               border-left:3px solid {{ service.color }};">
+            {% if a.result.analysis %}
+              <strong style="color:var(--text-muted);">Analyse :</strong>
+              <div class="mt-1">{{ a.result.analysis }}</div>
+            {% endif %}
+            {% if a.result.key_points %}
+              <div class="mt-2">
+                <strong style="color:var(--text-muted);">Points clés :</strong>
+                {% for kp in a.result.key_points %}
+                  <div class="mt-1" style="padding-left:.75rem;border-left:2px solid {{ service.color }};">→ {{ kp }}</div>
+                {% endfor %}
+              </div>
+            {% endif %}
+            {% if a.result.recommendation %}
+              <div class="mt-2">
+                <strong style="color:var(--text-muted);">Recommandation :</strong>
+                <div class="mt-1" style="padding-left:.75rem;border-left:2px solid {{ service.color }};">
+                  {{ a.result.recommendation }}
+                </div>
+              </div>
+            {% endif %}
+            {% if a.result.expert_note %}
+              <div class="mt-2" style="color:{{ service.color }};font-style:italic;font-size:.82rem;">
+                ✦ {{ a.result.expert_note }}
+              </div>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% else %}
+  <div style="text-align:center;padding:2rem;">
+    <p class="text-muted">Aucune analyse pour l'instant.</p>
+    <p class="text-muted mt-1" style="font-size:.8rem;">Posez votre première question ci-dessus.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const SERVICE_COLOR = "{{ service.color }}";
+
+  function toggleAnalysis(id) {
+    const row = document.getElementById('analysis-' + id);
+    if (row) row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+  }
+
+  function askAgent() {
+    const question = document.getElementById('inp-question').value.trim();
+    if (!question) { showToast('Veuillez saisir une question.'); return; }
+
+    const btn  = document.getElementById('btn-ask');
+    const zone = document.getElementById('result-zone');
+    btn.disabled = true;
+    btn.textContent = 'Analyse en cours…';
+    zone.style.display = 'none';
+
+    fetch('/api/services/{{ service_key }}/{{ agent_slug }}/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question })
+    })
+    .then(r => r.json())
+    .then(data => {
+      btn.disabled = false;
+      btn.textContent = 'Analyser →';
+      if (data.error) { showToast('Erreur : ' + data.error); return; }
+      renderResult(data.result, zone);
+      zone.style.display = 'block';
+      setTimeout(() => location.reload(), 3500);
+    })
+    .catch(() => {
+      btn.disabled = false;
+      btn.textContent = 'Analyser →';
+      showToast('Erreur de connexion.');
+    });
+  }
+
+  function renderResult(r, zone) {
+    const priorityColors = { HIGH: 'var(--high)', MEDIUM: 'var(--medium)', LOW: 'var(--low)' };
+    const pColor = priorityColors[r.priority_level] || 'var(--unknown)';
+    const conf   = r.confidence ? Math.round(r.confidence * 100) + '%' : '—';
+
+    let html = `
+      <div style="border-top:1px solid var(--border);padding-top:1.25rem;">
+        <div class="flex" style="gap:.75rem;margin-bottom:1rem;flex-wrap:wrap;">
+          <span class="badge badge-${r.priority_level || 'UNKNOWN'}" style="font-size:.8rem;">
+            ${r.priority_level || 'UNKNOWN'}
+          </span>
+          <span class="text-muted" style="font-size:.82rem;">Confiance : ${conf}</span>
+        </div>`;
+
+    if (r.analysis) html += `
+        <div style="margin-bottom:.75rem;">
+          <strong style="color:var(--text-muted);font-size:.82rem;">Analyse</strong>
+          <div class="mt-1" style="font-size:.85rem;line-height:1.7;">${r.analysis}</div>
+        </div>`;
+
+    if (r.key_points && r.key_points.length) {
+      html += `<div style="margin-bottom:.75rem;"><strong style="color:var(--text-muted);font-size:.82rem;">Points clés</strong>`;
+      r.key_points.forEach(kp => {
+        html += `<div class="mt-1" style="padding-left:.75rem;border-left:2px solid ${SERVICE_COLOR};font-size:.85rem;">→ ${kp}</div>`;
+      });
+      html += `</div>`;
+    }
+
+    if (r.recommendation) html += `
+        <div style="margin-bottom:.75rem;">
+          <strong style="color:var(--text-muted);font-size:.82rem;">Recommandation</strong>
+          <div class="mt-1" style="padding-left:.75rem;border-left:2px solid ${SERVICE_COLOR};font-size:.85rem;line-height:1.7;">${r.recommendation}</div>
+        </div>`;
+
+    if (r.expert_note) html += `
+        <div style="color:${SERVICE_COLOR};font-style:italic;font-size:.82rem;">✦ ${r.expert_note}</div>`;
+
+    html += `</div>`;
+    zone.innerHTML = html;
+  }
+</script>
+{% endblock %}
