@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}{{ agent_name }} — Service Juridique{% endblock %}
+
+{% set colors = {"douala": "#5b6af5", "yaounde": "#ef4444", "parme": "#22c55e", "yabassi": "#f59e0b"} %}
+{% set icons  = {"douala": "⚖", "yaounde": "🛡", "parme": "✓", "yabassi": "◈"} %}
+{% set subtitles = {
+  "douala":  "Juriste Senior — Base légale & qualification",
+  "yaounde": "Avocat Pénaliste — Risques procéduraux & défense",
+  "parme":   "DPO & Conformité — Checklist RGPD article par article",
+  "yabassi": "Risk Manager — Exposition financière & plan de remédiation"
+} %}
+{% set agent_color = colors[slug] %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div class="mt-2" style="font-size:.85rem;">
+  <a href="/service-juridique" class="text-muted" style="text-decoration:none;">← Service Juridique</a>
+</div>
+
+<!-- En-tête agent -->
+<div class="card mt-2" style="border-left:4px solid {{ agent_color }};background:linear-gradient(135deg,var(--surface),var(--surface2));">
+  <div class="flex" style="gap:1.25rem;align-items:center;">
+    <div style="font-size:3rem;line-height:1;color:{{ agent_color }};">{{ icons[slug] }}</div>
+    <div style="flex:1;">
+      <h1 style="color:{{ agent_color }};">{{ agent_name }}</h1>
+      <div class="text-muted mt-1">{{ subtitles[slug] }}</div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:1.8rem;font-weight:700;color:{{ agent_color }};">{{ analyses|length }}</div>
+      <div class="text-muted" style="font-size:.78rem;">analyse{{ 's' if analyses|length != 1 }}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Formulaire d'interrogation -->
+<div class="card mt-3" id="ask-card">
+  <h2>Poser une question à {{ agent_name.split(' — ')[0] }}</h2>
+  <div class="form-group" style="margin-bottom:0;">
+    <textarea id="inp-question" rows="4"
+      placeholder="Décrivez la situation juridique à analyser…"></textarea>
+  </div>
+  <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem;">
+    <button class="btn btn-primary" id="btn-ask" onclick="askAgent()">
+      Analyser →
+    </button>
+  </div>
+  <!-- Zone résultat -->
+  <div id="result-zone" style="display:none;margin-top:1.5rem;"></div>
+</div>
+
+<!-- Historique des analyses -->
+<div class="card mt-3">
+  <h2>Historique des analyses</h2>
+
+  {% if analyses %}
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Question</th>
+        <th>Risque</th>
+        <th>Confiance</th>
+        <th>Date</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in analyses %}
+      <tr onclick="toggleAnalysis({{ a.id }})" style="cursor:pointer;">
+        <td class="text-muted">{{ a.id }}</td>
+        <td style="max-width:420px;">
+          <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:400px;">
+            {{ a.question }}
+          </div>
+        </td>
+        <td>
+          {% if a.risk_level %}
+            <span class="badge badge-{{ a.risk_level }}">{{ a.risk_level }}</span>
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td>
+          {% if a.confidence %}
+            <div style="font-size:.85rem;">{{ (a.confidence * 100) | int }}%</div>
+            <div class="progress-bar" style="width:58px;margin-top:4px;">
+              <div class="progress-fill" style="width:{{ (a.confidence * 100) | int }}%"></div>
+            </div>
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td class="text-muted">{{ a.created_at[:16] }}</td>
+      </tr>
+
+      <!-- Panneau dépliable -->
+      {% if a.result %}
+      <tr id="analysis-{{ a.id }}" style="display:none;">
+        <td colspan="5" style="padding:0;">
+          <div style="background:var(--surface2);border-radius:8px;padding:1.25rem;
+               margin:0 8px 10px;font-size:.85rem;line-height:1.75;border-left:3px solid {{ agent_color }};">
+            {% if a.result.legal_basis %}
+              <strong style="color:var(--text-muted);">Base légale :</strong>
+              <div class="mt-1">{{ a.result.legal_basis }}</div>
+            {% endif %}
+            {% if a.result.articles_referenced %}
+              <div class="mt-2">
+                <strong style="color:var(--text-muted);">Articles :</strong>
+                {% for art in a.result.articles_referenced %}
+                  <span class="agent-badge" style="margin-left:4px;">{{ art }}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
+            {% if a.result.recommendation %}
+              <div class="mt-2">
+                <strong style="color:var(--text-muted);">Recommandation :</strong>
+                <div class="mt-1" style="padding-left:.75rem;border-left:2px solid {{ agent_color }};">
+                  {{ a.result.recommendation }}
+                </div>
+              </div>
+            {% endif %}
+            {% if a.result.expert_note %}
+              <div class="mt-2" style="color:{{ agent_color }};font-style:italic;font-size:.82rem;">
+                ✦ {{ a.result.expert_note }}
+              </div>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% else %}
+  <div style="text-align:center;padding:2rem;">
+    <p class="text-muted">Aucune analyse pour l'instant.</p>
+    <p class="text-muted mt-1" style="font-size:.8rem;">Posez votre première question ci-dessus.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const AGENT_COLOR = "{{ agent_color }}";
+
+  function toggleAnalysis(id) {
+    const row = document.getElementById('analysis-' + id);
+    if (row) row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+  }
+
+  function askAgent() {
+    const question = document.getElementById('inp-question').value.trim();
+    if (!question) { showToast('Veuillez saisir une question.'); return; }
+
+    const btn = document.getElementById('btn-ask');
+    btn.disabled = true;
+    btn.textContent = 'Analyse en cours…';
+
+    const zone = document.getElementById('result-zone');
+    zone.style.display = 'none';
+
+    fetch('/api/service-juridique/{{ slug }}/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question })
+    })
+    .then(r => r.json())
+    .then(data => {
+      btn.disabled = false;
+      btn.textContent = 'Analyser →';
+      if (data.error) { showToast('Erreur : ' + data.error); return; }
+      renderResult(data.result, zone);
+      zone.style.display = 'block';
+      setTimeout(() => location.reload(), 3000);
+    })
+    .catch(() => {
+      btn.disabled = false;
+      btn.textContent = 'Analyser →';
+      showToast('Erreur de connexion.');
+    });
+  }
+
+  function renderResult(r, zone) {
+    const riskColors = { HIGH: 'var(--high)', MEDIUM: 'var(--medium)', LOW: 'var(--low)' };
+    const riskColor  = riskColors[r.risk_level] || 'var(--unknown)';
+    const conf       = r.confidence ? Math.round(r.confidence * 100) + '%' : '—';
+
+    let html = `
+      <div style="border-top:1px solid var(--border);padding-top:1.25rem;">
+        <div class="flex" style="gap:.75rem;margin-bottom:1rem;flex-wrap:wrap;">
+          <span class="badge badge-${r.risk_level || 'UNKNOWN'}" style="font-size:.8rem;">${r.risk_level || 'UNKNOWN'}</span>
+          <span class="text-muted" style="font-size:.82rem;">Confiance : ${conf}</span>
+        </div>`;
+
+    if (r.legal_basis) html += `
+        <div style="margin-bottom:.75rem;">
+          <strong style="color:var(--text-muted);font-size:.82rem;">Base légale</strong>
+          <div class="mt-1" style="font-size:.85rem;line-height:1.7;">${r.legal_basis}</div>
+        </div>`;
+
+    if (r.articles_referenced && r.articles_referenced.length) {
+      html += `<div style="margin-bottom:.75rem;"><strong style="color:var(--text-muted);font-size:.82rem;">Articles</strong><div class="mt-1">`;
+      r.articles_referenced.forEach(a => {
+        html += `<span class="agent-badge" style="margin-right:4px;">${a}</span>`;
+      });
+      html += `</div></div>`;
+    }
+
+    if (r.recommendation) html += `
+        <div style="margin-bottom:.75rem;">
+          <strong style="color:var(--text-muted);font-size:.82rem;">Recommandation</strong>
+          <div class="mt-1" style="padding-left:.75rem;border-left:2px solid ${AGENT_COLOR};font-size:.85rem;line-height:1.7;">${r.recommendation}</div>
+        </div>`;
+
+    if (r.expert_note) html += `
+        <div style="color:${AGENT_COLOR};font-style:italic;font-size:.82rem;">✦ ${r.expert_note}</div>`;
+
+    html += `</div>`;
+    zone.innerHTML = html;
+  }
+</script>
+{% endblock %}

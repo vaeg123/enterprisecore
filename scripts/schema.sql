@@ -301,4 +301,21 @@ SET @@SESSION.SQL_LOG_BIN = @MYSQLDUMP_TEMP_LOG_BIN;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
+--
+-- Table structure for table `agent_queries`
+-- Stocke les interrogations directes aux agents du Service Juridique
+--
+
+CREATE TABLE IF NOT EXISTS `agent_queries` (
+  `id`         int          NOT NULL AUTO_INCREMENT,
+  `agent_role` varchar(20)  NOT NULL,
+  `question`   text         NOT NULL,
+  `result`     json         DEFAULT NULL,
+  `risk_level` varchar(10)  DEFAULT NULL,
+  `confidence` float        DEFAULT NULL,
+  `created_at` timestamp    NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `agent_role` (`agent_role`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- Dump completed on 2026-03-26 10:37:51

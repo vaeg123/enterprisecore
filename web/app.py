@@ -10,9 +10,18 @@ from datetime import datetime
 from flask import Flask, render_template, request, jsonify, redirect, url_for, Response, stream_with_context, session
 from database.db_config import get_connection
 from core.planning.mission_orchestrator import MissionOrchestrator
+from core.agents.specialized_legal_agent import SpecializedLegalAgent, AGENT_PERSONAS
 from web.pdf_generator import generate_mission_pdf
 from web.flask_auth import login_required, check_password, get_user
 from api.auth import generate_api_key, save_key, get_all_keys, deactivate_key
+
+# Mapping slug URL → clé de rôle interne
+AGENT_SLUGS = {
+    "douala":   "jurist",
+    "yaounde":  "lawyer",
+    "parme":    "compliance",
+    "yabassi":  "risk",
+}
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(32))
@@ -77,6 +86,78 @@ def mission_detail(mission_id):
         return redirect(url_for("index"))
     tasks = _get_tasks(mission_id)
     return render_template("mission_detail.html", mission=mission, tasks=tasks)
+
+
+@app.route("/service-juridique")
+@login_required
+def service_juridique():
+    agents_info = []
+    for slug, role in AGENT_SLUGS.items():
+        persona = AGENT_PERSONAS[role]
+        count   = _count_agent_queries(role)
+        agents_info.append({"slug": slug, "role": role, "name": persona["name"], "count": count})
+    return render_template("service_juridique.html", agents=agents_info)
+
+
+@app.route("/service-juridique/<agent_slug>")
+@login_required
+def agent_espace(agent_slug):
+    role = AGENT_SLUGS.get(agent_slug)
+    if not role:
+        return redirect(url_for("service_juridique"))
+    persona  = AGENT_PERSONAS[role]
+    analyses = _get_agent_queries(role)
+    return render_template("agent_espace.html",
+                           slug=agent_slug,
+                           role=role,
+                           agent_name=persona["name"],
+                           analyses=analyses)
+
+
+@app.route("/service-juridique/salle-de-reunion")
+@login_required
+def salle_reunion():
+    missions = _search_missions()
+    return render_template("salle_reunion.html", missions=missions, agents=AGENT_SLUGS)
+
+
+# ─────────────────────────────────────────────────────────────
+# API — Interrogation directe d'un agent
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/api/service-juridique/<agent_slug>/ask", methods=["POST"])
+@login_required
+def api_agent_ask(agent_slug):
+    role = AGENT_SLUGS.get(agent_slug)
+    if not role:
+        return jsonify({"error": "Agent inconnu"}), 404
+
+    data     = request.get_json()
+    question = (data.get("question") or "").strip()
+    if not question:
+        return jsonify({"error": "question requise"}), 400
+
+    try:
+        agent    = SpecializedLegalAgent(role)
+        response = agent.analyze(question)
+
+        # Parsing JSON
+        content = response.content.strip()
+        if content.startswith("```"):
+            content = content.split("```", 2)[1]
+            if content.startswith("json"):
+                content = content[4:]
+            content = content.rsplit("```", 1)[0].strip()
+
+        parsed     = json.loads(content)
+        risk_level = parsed.get("risk_level")
+        confidence = float(parsed.get("confidence", 0))
+
+        _save_agent_query(role, question, parsed, risk_level, confidence)
+        return jsonify({"ok": True, "result": parsed})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/settings")
@@ -311,6 +392,50 @@ def _get_tasks(mission_id: int) -> list:
             except Exception:
                 pass
     return rows
+
+
+def _save_agent_query(role: str, question: str, result: dict, risk_level: str, confidence: float):
+    conn   = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO agent_queries (agent_role, question, result, risk_level, confidence) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (role, question, json.dumps(result, ensure_ascii=False), risk_level, confidence)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def _get_agent_queries(role: str) -> list:
+    conn   = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(
+        "SELECT id, question, result, risk_level, confidence, created_at "
+        "FROM agent_queries WHERE agent_role=%s ORDER BY created_at DESC LIMIT 50",
+        (role,)
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    for r in rows:
+        r["created_at"] = str(r["created_at"])
+        if r.get("result"):
+            try:
+                r["result"] = json.loads(r["result"])
+            except Exception:
+                pass
+    return rows
+
+
+def _count_agent_queries(role: str) -> int:
+    conn   = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM agent_queries WHERE agent_role=%s", (role,))
+    count = cursor.fetchone()[0]
+    cursor.close()
+    conn.close()
+    return count
 
 
 def _get_mission_risk(mission_id: int) -> str:
