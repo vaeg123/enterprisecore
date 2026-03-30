@@ -72,7 +72,7 @@ def create_admin():
     admin_pass = os.getenv("ADMIN_PASSWORD", "admin123")
 
     if not get_user("admin"):
-        create_user("admin", admin_pass)
+        create_user("admin", admin_pass, role="admin")
         print(f"[db_init] Admin user created (password: {admin_pass})")
     else:
         print("[db_init] Admin user already exists.")
@@ -86,9 +86,10 @@ def create_admin():
 
 
 def migrate_rbac():
-    """Ajoute les colonnes RBAC si elles n'existent pas encore."""
+    """Ajoute les colonnes RBAC + s'assure que l'admin a bien role='admin'."""
     conn   = get_connection()
     cursor = conn.cursor()
+
     for col_sql in [
         "ALTER TABLE users ADD COLUMN permissions JSON DEFAULT NULL",
         "ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1",
@@ -99,6 +100,17 @@ def migrate_rbac():
         except Exception as e:
             if "Duplicate column" not in str(e) and "1060" not in str(e):
                 print(f"[db_init] migrate_rbac warning: {e}")
+
+    # Garantir que l'utilisateur admin a bien role='admin'
+    try:
+        cursor.execute(
+            "UPDATE users SET role='admin', is_active=1 WHERE username='admin'"
+        )
+        conn.commit()
+        print("[db_init] Admin role enforced.")
+    except Exception as e:
+        print(f"[db_init] migrate_rbac admin fix warning: {e}")
+
     cursor.close()
     conn.close()
 

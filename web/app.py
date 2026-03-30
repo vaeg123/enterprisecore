@@ -38,6 +38,26 @@ _missions_state: dict = {}   # run_id → {"status", "mission_id", "queue"}
 _state_lock = threading.Lock()
 
 
+# ── Rafraîchissement automatique de la session ────────────────
+@app.before_request
+def refresh_session():
+    """
+    Recharge role/permissions depuis la DB si la session est stale
+    (connexion antérieure aux changements RBAC, ou restart app).
+    """
+    uid = session.get("user_id")
+    if not uid:
+        return
+    if session.get("role") is None:
+        user = get_user_by_id(uid)
+        if not user or user.get("is_active") == 0:
+            session.clear()
+            return
+        session["role"]        = user.get("role") or "user"
+        session["permissions"] = user.get("permissions") or []
+        session["username"]    = user.get("username", session.get("username", ""))
+
+
 # ─────────────────────────────────────────────────────────────
 # Auth
 # ─────────────────────────────────────────────────────────────
@@ -57,14 +77,13 @@ def login():
         user     = get_user(username)
 
         if user and check_password(password, user["password_hash"]):
-            if not user.get("is_active", 1):
+            if user.get("is_active") == 0:
                 error = "Ce compte est désactivé. Contactez l'administrateur."
             else:
                 session["user_id"]     = user["id"]
                 session["username"]    = user["username"]
-                session["role"]        = user.get("role", "user")
+                session["role"]        = user.get("role") or "user"
                 session["permissions"] = user.get("permissions") or []
-                session["is_active"]   = True
                 return redirect(next_url)
         else:
             error = "Identifiant ou mot de passe incorrect."
