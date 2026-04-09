@@ -188,15 +188,15 @@ def migrate_telegram_source():
     cursor = conn.cursor()
     for table in ("agent_queries", "service_queries"):
         for col_sql in [
-            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'web'",
-            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS telegram_chat_id BIGINT NULL",
+            f"ALTER TABLE {table} ADD COLUMN source VARCHAR(50) DEFAULT 'web'",
+            f"ALTER TABLE {table} ADD COLUMN telegram_chat_id BIGINT NULL",
         ]:
             try:
                 cursor.execute(col_sql)
                 conn.commit()
             except Exception as e:
                 if "Duplicate column" in str(e) or "1060" in str(e):
-                    pass
+                    pass  # déjà existante — OK
                 else:
                     print(f"[db_init] {col_sql[:60]}... warning: {e}")
     cursor.close()
