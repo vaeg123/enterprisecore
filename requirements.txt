@@ -28,7 +28,9 @@ numpy==2.4.2
 openai==2.21.0
 packaging==26.0
 pillow==12.1.1
+pdfplumber==0.11.9
 pydantic==2.12.5
+python-docx==1.2.0
 pydantic_core==2.41.5
 Pygments==2.19.2
 python-dotenv==1.2.1
