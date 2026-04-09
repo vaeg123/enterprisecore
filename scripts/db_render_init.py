@@ -163,6 +163,74 @@ def migrate_agent_queries():
     conn.close()
 
 
+def migrate_telegram_chat_id():
+    """ÉVOLUTION 2 — Ajoute telegram_chat_id à la table users (idempotente)."""
+    conn   = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "ALTER TABLE users ADD COLUMN telegram_chat_id BIGINT NULL"
+        )
+        conn.commit()
+        print("[db_init] Column telegram_chat_id added to users.")
+    except Exception as e:
+        if "Duplicate column" in str(e) or "1060" in str(e):
+            print("[db_init] Column telegram_chat_id already exists.")
+        else:
+            print(f"[db_init] migrate_telegram_chat_id warning: {e}")
+    cursor.close()
+    conn.close()
+
+
+def migrate_telegram_source():
+    """ÉVOLUTION 5 — Ajoute source + telegram_chat_id aux tables agent_queries / service_queries."""
+    conn   = get_connection()
+    cursor = conn.cursor()
+    for table in ("agent_queries", "service_queries"):
+        for col_sql in [
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'web'",
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS telegram_chat_id BIGINT NULL",
+        ]:
+            try:
+                cursor.execute(col_sql)
+                conn.commit()
+            except Exception as e:
+                if "Duplicate column" in str(e) or "1060" in str(e):
+                    pass
+                else:
+                    print(f"[db_init] {col_sql[:60]}... warning: {e}")
+    cursor.close()
+    conn.close()
+    print("[db_init] Telegram source columns applied.")
+
+
+def migrate_scheduled_missions():
+    """ÉVOLUTION 3 — Crée la table scheduled_missions si elle n'existe pas."""
+    conn   = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scheduled_missions (
+                id         INT AUTO_INCREMENT PRIMARY KEY,
+                title      VARCHAR(255) NOT NULL,
+                objective  TEXT NOT NULL,
+                cron_expr  VARCHAR(100) NOT NULL,
+                label      VARCHAR(255),
+                active     TINYINT(1) DEFAULT 1,
+                last_run   DATETIME NULL,
+                next_run   DATETIME NULL,
+                created_by INT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        conn.commit()
+        print("[db_init] Table scheduled_missions OK.")
+    except Exception as e:
+        print(f"[db_init] migrate_scheduled_missions warning: {e}")
+    cursor.close()
+    conn.close()
+
+
 if __name__ == "__main__":
     print("[db_init] Initializing database...")
     try:
@@ -170,6 +238,9 @@ if __name__ == "__main__":
         migrate_rbac()
         migrate_service_queries()
         migrate_agent_queries()
+        migrate_telegram_chat_id()
+        migrate_telegram_source()
+        migrate_scheduled_missions()
         create_admin()
         print("[db_init] Done.")
     except Exception as e:

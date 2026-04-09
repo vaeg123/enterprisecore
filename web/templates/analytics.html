@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}Analytics — EnterpriseCore AI{% endblock %}
+
+{% block content %}
+<div class="flex-between mt-2">
+  <div>
+    <h1>Tableau de bord analytique</h1>
+    <p class="text-muted mt-1">Vue d'ensemble de l'activité EnterpriseCore</p>
+  </div>
+</div>
+
+<!-- KPI Cards -->
+<div id="kpi-grid" class="mt-3" style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;">
+  <div class="card" style="text-align:center;border-top:3px solid var(--accent);">
+    <div id="kpi-missions" style="font-size:2.2rem;font-weight:700;color:var(--accent);">—</div>
+    <div class="text-muted" style="font-size:.8rem;margin-top:4px;">Missions totales</div>
+  </div>
+  <div class="card" style="text-align:center;border-top:3px solid #10b981;">
+    <div id="kpi-queries" style="font-size:2.2rem;font-weight:700;color:#10b981;">—</div>
+    <div class="text-muted" style="font-size:.8rem;margin-top:4px;">Requêtes agents</div>
+  </div>
+  <div class="card" style="text-align:center;border-top:3px solid #a855f7;">
+    <div id="kpi-conf" style="font-size:2.2rem;font-weight:700;color:#a855f7;">—</div>
+    <div class="text-muted" style="font-size:.8rem;margin-top:4px;">Confiance moyenne</div>
+  </div>
+  <div class="card" style="text-align:center;border-top:3px solid #f59e0b;">
+    <div id="kpi-docs" style="font-size:2.2rem;font-weight:700;color:#f59e0b;">—</div>
+    <div class="text-muted" style="font-size:.8rem;margin-top:4px;">Documents RAG</div>
+  </div>
+</div>
+
+<!-- Graphiques -->
+<div class="mt-3" style="display:grid;grid-template-columns:2fr 1fr;gap:1.5rem;">
+  <!-- Barres : missions par mois -->
+  <div class="card">
+    <h2>Missions par mois (12 derniers mois)</h2>
+    <canvas id="chart-missions" height="220"></canvas>
+  </div>
+
+  <!-- Donut : distribution risques -->
+  <div class="card" style="display:flex;flex-direction:column;align-items:center;">
+    <h2 style="align-self:flex-start;">Distribution des risques</h2>
+    <canvas id="chart-risks" style="max-width:220px;max-height:220px;"></canvas>
+    <div id="risk-legend" class="mt-2" style="display:flex;gap:.75rem;flex-wrap:wrap;justify-content:center;"></div>
+  </div>
+</div>
+
+<!-- Top domaines -->
+<div class="card mt-3">
+  <h2>Top domaines de connaissances</h2>
+  <div id="domains-table-container">
+    <table id="domains-table">
+      <thead>
+        <tr>
+          <th>Domaine</th>
+          <th>Documents</th>
+          <th>Proportion</th>
+        </tr>
+      </thead>
+      <tbody id="domains-tbody">
+        <tr><td colspan="3" class="text-muted" style="text-align:center;padding:2rem;">Chargement…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Stats knowledge -->
+<div class="mt-3" style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;">
+  <div class="card" style="text-align:center;border-top:3px solid var(--accent);">
+    <div id="kpi-chunks" style="font-size:2rem;font-weight:700;color:var(--accent);">—</div>
+    <div class="text-muted" style="font-size:.8rem;">Chunks indexés</div>
+  </div>
+  <div class="card" style="text-align:center;border-top:3px solid #a855f7;">
+    <div id="kpi-embeddings" style="font-size:2rem;font-weight:700;color:#a855f7;">—</div>
+    <div class="text-muted" style="font-size:.8rem;">Embeddings RAG</div>
+  </div>
+  <div class="card" style="text-align:center;border-top:3px solid var(--low);">
+    <div id="kpi-coverage" style="font-size:2rem;font-weight:700;color:var(--low);">—</div>
+    <div class="text-muted" style="font-size:.8rem;">Couverture RAG</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  Chart.defaults.color = '#94a3b8';
+  Chart.defaults.borderColor = '#2e3350';
+
+  const RISK_COLORS_MAP = {
+    HIGH:    '#ef4444',
+    MEDIUM:  '#f59e0b',
+    LOW:     '#22c55e',
+    UNKNOWN: '#64748b',
+  };
+
+  async function loadAnalytics() {
+    let data;
+    try {
+      const resp = await fetch('/api/analytics/data');
+      data = await resp.json();
+    } catch(e) {
+      console.error('Analytics fetch error:', e);
+      return;
+    }
+
+    // KPI Cards
+    document.getElementById('kpi-missions').textContent  = data.missions_total ?? '—';
+    document.getElementById('kpi-queries').textContent   = data.queries_total  ?? '—';
+    document.getElementById('kpi-conf').textContent      = data.confidence_avg
+      ? Math.round(data.confidence_avg * 100) + '%' : '—';
+    document.getElementById('kpi-docs').textContent      = data.knowledge_stats?.docs ?? '—';
+    document.getElementById('kpi-chunks').textContent    = data.knowledge_stats?.chunks ?? '—';
+    document.getElementById('kpi-embeddings').textContent = data.knowledge_stats?.embeddings ?? '—';
+
+    const chunks = data.knowledge_stats?.chunks || 1;
+    const emb    = data.knowledge_stats?.embeddings || 0;
+    document.getElementById('kpi-coverage').textContent = Math.round(emb / chunks * 100) + '%';
+
+    // Chart missions par mois
+    const mByM    = data.missions_by_month || [];
+    const labels  = mByM.map(r => r.month);
+    const counts  = mByM.map(r => r.count);
+    new Chart(document.getElementById('chart-missions'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Missions',
+          data:  counts,
+          backgroundColor: 'rgba(91,106,245,.7)',
+          borderColor:     '#5b6af5',
+          borderWidth:     1,
+          borderRadius:    4,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { stepSize: 1 } },
+        }
+      }
+    });
+
+    // Chart donut risques
+    const rDist   = data.risk_distribution || {};
+    const rLabels = Object.keys(rDist).filter(k => rDist[k] > 0);
+    const rData   = rLabels.map(k => rDist[k]);
+    const rColors = rLabels.map(k => RISK_COLORS_MAP[k] || '#64748b');
+
+    if (rLabels.length > 0) {
+      new Chart(document.getElementById('chart-risks'), {
+        type: 'doughnut',
+        data: {
+          labels:   rLabels,
+          datasets: [{ data: rData, backgroundColor: rColors, borderWidth: 2, borderColor: '#1a1d27' }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          cutout: '65%',
+        }
+      });
+
+      const legend = document.getElementById('risk-legend');
+      rLabels.forEach((label, i) => {
+        const color = rColors[i];
+        legend.innerHTML += `<div style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;">
+          <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;"></span>
+          <span>${label} (${rData[i]})</span>
+        </div>`;
+      });
+    }
+
+    // Tableau top domaines
+    const domains = data.top_domains || [];
+    const tbody   = document.getElementById('domains-tbody');
+    const maxCount = Math.max(...domains.map(d => d.count), 1);
+
+    if (domains.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="text-muted" style="text-align:center;padding:2rem;">Aucun domaine.</td></tr>';
+    } else {
+      tbody.innerHTML = domains.map(d => {
+        const pct = Math.round(d.count / maxCount * 100);
+        return `<tr>
+          <td><strong>${d.domain}</strong></td>
+          <td style="color:var(--accent);font-weight:600;">${d.count}</td>
+          <td style="min-width:160px;">
+            <div style="display:flex;align-items:center;gap:.5rem;">
+              <div class="progress-bar" style="flex:1;height:6px;">
+                <div class="progress-fill" style="width:${pct}%;"></div>
+              </div>
+              <span class="text-muted" style="font-size:.78rem;min-width:36px;">${pct}%</span>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+  }
+
+  loadAnalytics();
+</script>
+{% endblock %}

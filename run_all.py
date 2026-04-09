@@ -39,6 +39,17 @@ def _start_telegram_bot():
         print(f"⚠️  Bot Telegram non démarré : {e}")
 
 
+def _start_scheduler():
+    """Lance APScheduler en thread daemon pour les missions planifiées."""
+    try:
+        sys.path.insert(0, BASE)
+        from core.scheduler import start_scheduler
+        start_scheduler()
+        print("✅ Scheduler  APScheduler démarré (missions planifiées actives)")
+    except Exception as e:
+        print(f"⚠️  Scheduler non démarré : {e}")
+
+
 def start():
     # ── Flask ────────────────────────────────────────────────────
     flask_proc = subprocess.Popen(
@@ -71,6 +82,10 @@ def start():
         print("✅ Telegram   bot démarré (thread daemon)")
     else:
         print("⚠️  Telegram   bot ignoré (TELEGRAM_TOKEN absent du .env)")
+
+    # ── APScheduler ──────────────────────────────────────────────
+    sched_thread = threading.Thread(target=_start_scheduler, daemon=True, name="APScheduler")
+    sched_thread.start()
 
     print("\nCtrl+C pour arrêter tous les services.\n")
 

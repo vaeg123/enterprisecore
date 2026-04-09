@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}Base de connaissances — EnterpriseCore AI{% endblock %}
+
+{% block content %}
+<div class="flex-between mt-2">
+  <div>
+    <h1>Base de connaissances</h1>
+    <p class="text-muted mt-1">Gérez les documents ingérés pour le RAG (Retrieval-Augmented Generation)</p>
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="mt-3" style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;">
+  <div class="card" style="text-align:center;border-top:3px solid var(--accent);">
+    <div style="font-size:2rem;font-weight:700;color:var(--accent);">{{ stats.docs }}</div>
+    <div class="text-muted" style="font-size:.8rem;">Documents</div>
+  </div>
+  <div class="card" style="text-align:center;border-top:3px solid #10b981;">
+    <div style="font-size:2rem;font-weight:700;color:#10b981;">{{ stats.chunks }}</div>
+    <div class="text-muted" style="font-size:.8rem;">Chunks</div>
+  </div>
+  <div class="card" style="text-align:center;border-top:3px solid #a855f7;">
+    <div style="font-size:2rem;font-weight:700;color:#a855f7;">{{ stats.embeddings }}</div>
+    <div class="text-muted" style="font-size:.8rem;">Embeddings</div>
+  </div>
+  <div class="card" style="text-align:center;border-top:3px solid var(--low);">
+    <div style="font-size:2rem;font-weight:700;color:var(--low);">{{ stats.coverage }}%</div>
+    <div class="text-muted" style="font-size:.8rem;">Couverture RAG</div>
+  </div>
+</div>
+
+<!-- Zone d'upload -->
+<div class="card mt-3">
+  <h2>Importer des documents</h2>
+
+  <div class="form-group">
+    <label>Domaine de connaissance</label>
+    <select id="domain-select" style="width:100%;background:var(--surface2);border:1px solid var(--border);
+            border-radius:6px;color:var(--text);padding:10px 14px;font-size:.9rem;font-family:inherit;outline:none;">
+      <option value="">-- Sélectionner un domaine --</option>
+      {% for code, domain in domains.items() %}
+      <option value="{{ code }}">{{ code }} — {{ domain.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;">
+      <input type="checkbox" id="force-reimport" style="width:auto;">
+      Forcer le ré-import (remplace les chunks existants)
+    </label>
+  </div>
+
+  <!-- Zone drag & drop -->
+  <div id="drop-zone" style="border:2px dashed var(--border);border-radius:var(--radius);
+       padding:2.5rem;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;"
+       onclick="document.getElementById('file-input').click()"
+       ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
+    <div style="font-size:2.5rem;margin-bottom:.75rem;">📄</div>
+    <div style="font-weight:600;color:var(--text);">Glissez vos fichiers ici</div>
+    <div class="text-muted mt-1" style="font-size:.85rem;">ou cliquez pour sélectionner</div>
+    <div class="text-muted mt-1" style="font-size:.78rem;">PDF · DOCX · TXT · MD · CSV</div>
+    <input type="file" id="file-input" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv"
+           style="display:none;" onchange="handleFiles(this.files)">
+  </div>
+
+  <!-- Liste des fichiers sélectionnés -->
+  <div id="file-list" class="mt-2" style="display:none;">
+    <div style="font-size:.85rem;font-weight:600;margin-bottom:.5rem;">Fichiers sélectionnés :</div>
+    <div id="file-items"></div>
+  </div>
+
+  <!-- Progress bar -->
+  <div id="progress-container" class="mt-2" style="display:none;">
+    <div style="font-size:.85rem;color:var(--text-muted);margin-bottom:.4rem;" id="progress-label">Upload en cours…</div>
+    <div class="progress-bar" style="height:8px;">
+      <div class="progress-fill" id="progress-fill" style="width:0%;"></div>
+    </div>
+  </div>
+
+  <!-- Résultat -->
+  <div id="upload-result" class="mt-2" style="display:none;padding:.75rem;border-radius:6px;font-size:.875rem;"></div>
+
+  <div class="mt-3" style="display:flex;gap:.75rem;">
+    <button class="btn btn-primary" id="upload-btn" onclick="uploadFiles()" disabled>
+      ↑ Importer
+    </button>
+    <button class="btn btn-outline" onclick="clearFiles()">Effacer</button>
+  </div>
+</div>
+
+<!-- Tableau des documents -->
+<div class="card mt-3">
+  <h2>Documents importés</h2>
+  {% if docs %}
+  <table>
+    <thead>
+      <tr>
+        <th>Titre</th>
+        <th>Domaine</th>
+        <th>Type</th>
+        <th>Chunks</th>
+        <th>Importé le</th>
+        <th style="text-align:right;">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="docs-table">
+      {% for doc in docs %}
+      <tr id="doc-row-{{ doc.id }}">
+        <td><strong>{{ doc.title }}</strong></td>
+        <td>
+          <span class="agent-badge" style="background:var(--accent)22;color:var(--accent);border-color:var(--accent)44;">
+            {{ doc.domain_code or '—' }}
+          </span>
+          <div class="text-muted" style="font-size:.75rem;margin-top:2px;">{{ doc.domain_label or '' }}</div>
+        </td>
+        <td><span class="agent-badge">{{ doc.source_type }}</span></td>
+        <td style="color:var(--accent);font-weight:600;">{{ doc.nb_chunks }}</td>
+        <td class="text-muted">{{ doc.created_at[:10] }}</td>
+        <td style="text-align:right;">
+          <button class="btn btn-outline" style="padding:3px 10px;font-size:.78rem;color:var(--high);border-color:var(--high);"
+                  onclick="deleteDoc({{ doc.id }}, '{{ doc.title|replace("'", "\\'") }}')">
+            Supprimer
+          </button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">Aucun document importé. Utilisez le formulaire ci-dessus pour commencer.</p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  let selectedFiles = [];
+
+  function handleDragOver(e) {
+    e.preventDefault();
+    const zone = document.getElementById('drop-zone');
+    zone.style.borderColor = 'var(--accent)';
+    zone.style.background  = 'rgba(91,106,245,.06)';
+  }
+
+  function handleDragLeave(e) {
+    const zone = document.getElementById('drop-zone');
+    zone.style.borderColor = 'var(--border)';
+    zone.style.background  = '';
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    handleDragLeave(e);
+    handleFiles(e.dataTransfer.files);
+  }
+
+  function handleFiles(fileList) {
+    selectedFiles = Array.from(fileList);
+    renderFileList();
+  }
+
+  function renderFileList() {
+    const container = document.getElementById('file-list');
+    const items     = document.getElementById('file-items');
+    const btn       = document.getElementById('upload-btn');
+    if (selectedFiles.length === 0) {
+      container.style.display = 'none';
+      btn.disabled = true;
+      return;
+    }
+    container.style.display = 'block';
+    btn.disabled = false;
+    items.innerHTML = selectedFiles.map((f, i) =>
+      `<div style="display:flex;align-items:center;gap:.5rem;padding:.4rem .5rem;
+            background:var(--surface2);border-radius:4px;margin-bottom:.3rem;font-size:.85rem;">
+        <span style="color:var(--accent);">📄</span>
+        <span style="flex:1;">${f.name}</span>
+        <span class="text-muted">${(f.size/1024).toFixed(1)} KB</span>
+        <button onclick="removeFile(${i})" style="background:none;border:none;color:var(--high);cursor:pointer;font-size:.85rem;">✕</button>
+      </div>`
+    ).join('');
+  }
+
+  function removeFile(i) {
+    selectedFiles.splice(i, 1);
+    renderFileList();
+  }
+
+  function clearFiles() {
+    selectedFiles = [];
+    document.getElementById('file-input').value = '';
+    renderFileList();
+    document.getElementById('upload-result').style.display = 'none';
+    document.getElementById('progress-container').style.display = 'none';
+  }
+
+  async function uploadFiles() {
+    const domain = document.getElementById('domain-select').value;
+    const force  = document.getElementById('force-reimport').checked;
+
+    if (!domain) { showToast('Sélectionnez un domaine.'); return; }
+    if (selectedFiles.length === 0) { showToast('Aucun fichier sélectionné.'); return; }
+
+    const btn = document.getElementById('upload-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Traitement…';
+
+    const progressContainer = document.getElementById('progress-container');
+    const progressFill      = document.getElementById('progress-fill');
+    const progressLabel     = document.getElementById('progress-label');
+    const resultDiv         = document.getElementById('upload-result');
+
+    progressContainer.style.display = 'block';
+    progressFill.style.width = '10%';
+    progressLabel.textContent = 'Upload en cours…';
+    resultDiv.style.display = 'none';
+
+    const formData = new FormData();
+    formData.append('domain_code', domain);
+    formData.append('force', force ? 'true' : 'false');
+    selectedFiles.forEach(f => formData.append('files', f));
+
+    progressFill.style.width = '40%';
+    progressLabel.textContent = 'Ingestion et génération des embeddings…';
+
+    try {
+      const resp = await fetch('/api/knowledge/upload', { method: 'POST', body: formData });
+      const data = await resp.json();
+
+      progressFill.style.width = '100%';
+      progressLabel.textContent = 'Terminé !';
+
+      if (data.error) {
+        resultDiv.style.background = 'rgba(239,68,68,.1)';
+        resultDiv.style.border     = '1px solid rgba(239,68,68,.3)';
+        resultDiv.style.color      = 'var(--high)';
+        resultDiv.textContent      = '❌ ' + data.error;
+      } else {
+        resultDiv.style.background = 'rgba(34,197,94,.1)';
+        resultDiv.style.border     = '1px solid rgba(34,197,94,.3)';
+        resultDiv.style.color      = 'var(--low)';
+        resultDiv.textContent      = `✅ Import terminé — ${data.chunks} chunks, ${data.embeddings} embeddings générés. ${data.skipped} fichier(s) ignoré(s).`;
+        setTimeout(() => location.reload(), 2000);
+      }
+      resultDiv.style.display = 'block';
+    } catch(e) {
+      progressContainer.style.display = 'none';
+      resultDiv.style.background = 'rgba(239,68,68,.1)';
+      resultDiv.style.border     = '1px solid rgba(239,68,68,.3)';
+      resultDiv.style.color      = 'var(--high)';
+      resultDiv.textContent      = '❌ Erreur réseau : ' + e.message;
+      resultDiv.style.display    = 'block';
+    }
+
+    btn.textContent = '↑ Importer';
+    btn.disabled    = false;
+  }
+
+  async function deleteDoc(id, title) {
+    if (!confirm(`Supprimer "${title}" et tous ses chunks/embeddings ? Cette action est irréversible.`)) return;
+    try {
+      const resp = await fetch(`/api/knowledge/delete/${id}`, { method: 'POST' });
+      const data = await resp.json();
+      if (data.ok) {
+        const row = document.getElementById(`doc-row-${id}`);
+        if (row) row.remove();
+        showToast('Document supprimé.');
+      } else {
+        showToast('Erreur : ' + (data.error || 'inconnue'));
+      }
+    } catch(e) {
+      showToast('Erreur réseau : ' + e.message);
+    }
+  }
+</script>
+{% endblock %}

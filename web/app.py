@@ -14,6 +14,7 @@ from core.agents.specialized_legal_agent import SpecializedLegalAgent, AGENT_PER
 from core.agents.service_agent import ServiceAgent
 from core.agents.services_config import SERVICES, list_services
 from web.pdf_generator import generate_mission_pdf
+from web.word_generator import generate_mission_docx
 from web.flask_auth import (
     login_required, admin_required, service_required,
     check_password, get_user, get_user_by_id, get_all_users,
@@ -21,6 +22,14 @@ from web.flask_auth import (
     has_service_access, ALL_SERVICES, ROLES, SERVICE_LABELS,
 )
 from api.auth import generate_api_key, save_key, get_all_keys, deactivate_key
+from core.knowledge.ingestor import (
+    ingest_bytes, load_domains, get_stats as knowledge_stats,
+    list_documents, delete_document,
+)
+from core.scheduler import (
+    create_scheduled_mission, toggle_scheduled_mission,
+    delete_scheduled_mission, list_scheduled_missions,
+)
 
 # Mapping slug URL → clé de rôle interne
 AGENT_SLUGS = {
@@ -423,6 +432,8 @@ def api_create_mission():
     with _state_lock:
         _missions_state[run_id] = {"status": "running", "mission_id": None, "queue": event_q}
 
+    creator_id = session.get("user_id")
+
     def run():
         def on_progress(event: dict):
             event_q.put(event)
@@ -430,10 +441,28 @@ def api_create_mission():
         try:
             orchestrator = MissionOrchestrator()
             result = orchestrator.run(title=title, objective=objective, on_progress=on_progress)
-            event_q.put({"type": "mission_done", "mission_id": result["mission_id"]})
+            mission_id = result["mission_id"]
+            event_q.put({"type": "mission_done", "mission_id": mission_id})
             with _state_lock:
                 _missions_state[run_id]["status"]     = "done"
-                _missions_state[run_id]["mission_id"] = result["mission_id"]
+                _missions_state[run_id]["mission_id"] = mission_id
+
+            # ÉVOLUTION 2 — Notifier le créateur via Telegram
+            if creator_id:
+                def _notify():
+                    try:
+                        from telegram_bot.bot import notify_user
+                        risk = result.get("final_risk_level", "UNKNOWN")
+                        notify_user(
+                            creator_id,
+                            f"✅ Mission terminée : {title}\n"
+                            f"Risque global : {risk}\n"
+                            f"Rapport : http://localhost:5050/mission/{mission_id}"
+                        )
+                    except Exception:
+                        pass
+                threading.Thread(target=_notify, daemon=True).start()
+
         except Exception as e:
             event_q.put({"type": "mission_error", "error": str(e)})
             with _state_lock:
@@ -704,6 +733,360 @@ def _get_mission_risk(mission_id: int) -> str:
     if not levels:
         return "UNKNOWN"
     return max(levels, key=lambda l: priority.get(l, 0))
+
+
+# ─────────────────────────────────────────────────────────────
+# ÉVOLUTION 1 — Interface d'ingestion graphique
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/admin/knowledge")
+@admin_required
+def admin_knowledge():
+    docs    = list_documents()
+    domains = load_domains()
+    stats   = knowledge_stats()
+    return render_template("knowledge_admin.html",
+                           docs=docs, domains=domains, stats=stats)
+
+
+@app.route("/api/knowledge/upload", methods=["POST"])
+@admin_required
+def api_knowledge_upload():
+    domain_code = (request.form.get("domain_code") or "").strip().upper()
+    force       = request.form.get("force") == "true"
+    files       = request.files.getlist("files")
+
+    if not files or all(f.filename == "" for f in files):
+        return jsonify({"error": "Aucun fichier fourni"}), 400
+    if not domain_code:
+        return jsonify({"error": "domain_code requis"}), 400
+
+    results = []
+    for f in files:
+        if not f or not f.filename:
+            continue
+        try:
+            file_bytes = f.read()
+            result     = ingest_bytes(f.filename, file_bytes, domain_code, force)
+            results.append(result)
+        except Exception as e:
+            results.append({"file": f.filename, "skipped": True, "error": str(e)})
+
+    total_chunks     = sum(r.get("chunks", 0)     for r in results if not r.get("skipped"))
+    total_embeddings = sum(r.get("embeddings", 0) for r in results if not r.get("skipped"))
+    skipped          = sum(1 for r in results if r.get("skipped"))
+
+    return jsonify({
+        "ok":         True,
+        "chunks":     total_chunks,
+        "embeddings": total_embeddings,
+        "domain":     domain_code,
+        "skipped":    skipped,
+        "results":    results,
+    })
+
+
+@app.route("/api/knowledge/delete/<int:doc_id>", methods=["POST"])
+@admin_required
+def api_knowledge_delete(doc_id):
+    try:
+        delete_document(doc_id)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────
+# ÉVOLUTION 3 — Missions planifiées (cron)
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/admin/scheduled")
+@admin_required
+def admin_scheduled():
+    missions = list_scheduled_missions()
+    return render_template("scheduled_admin.html", missions=missions)
+
+
+@app.route("/api/scheduled/create", methods=["POST"])
+@admin_required
+def api_scheduled_create():
+    data      = request.get_json()
+    title     = (data.get("title") or "").strip()
+    objective = (data.get("objective") or "").strip()
+    cron_expr = (data.get("cron_expr") or "").strip()
+    label     = (data.get("label") or "").strip()
+
+    if not title or not objective or not cron_expr:
+        return jsonify({"error": "title, objective et cron_expr requis"}), 400
+
+    try:
+        new_id = create_scheduled_mission(
+            title, objective, cron_expr, label,
+            created_by=session.get("user_id")
+        )
+        return jsonify({"ok": True, "id": new_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/scheduled/<int:mission_id>/toggle", methods=["POST"])
+@admin_required
+def api_scheduled_toggle(mission_id):
+    try:
+        new_state = toggle_scheduled_mission(mission_id)
+        return jsonify({"ok": True, "active": new_state})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/scheduled/<int:mission_id>/delete", methods=["POST"])
+@admin_required
+def api_scheduled_delete(mission_id):
+    try:
+        delete_scheduled_mission(mission_id)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────
+# ÉVOLUTION 4 — Export Word (.docx)
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/api/mission/<int:mission_id>/docx")
+@login_required
+def mission_docx(mission_id):
+    mission = _get_mission(mission_id)
+    if not mission:
+        return jsonify({"error": "Mission introuvable"}), 404
+    tasks     = _get_tasks(mission_id)
+    docx_bytes = generate_mission_docx(mission, tasks)
+    filename  = f"rapport_mission_{mission_id}.docx"
+    return Response(
+        docx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# ÉVOLUTION 6 — Salle de réunion multi-services
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/reunion-generale")
+@login_required
+def reunion_generale():
+    # Construire la liste de tous les agents disponibles (juridiques + services métier)
+    all_agents = []
+    # Agents juridiques
+    for slug, role in AGENT_SLUGS.items():
+        persona = AGENT_PERSONAS[role]
+        all_agents.append({
+            "id":      f"juridique__{slug}",
+            "name":    persona["name"],
+            "service": "Service Juridique",
+            "color":   "#5b6af5",
+            "type":    "juridique",
+            "slug":    slug,
+        })
+    # Agents métier
+    for svc_key, svc in SERVICES.items():
+        for agent_slug, agent_cfg in svc["agents"].items():
+            all_agents.append({
+                "id":      f"{svc_key}__{agent_slug}",
+                "name":    agent_cfg["name"],
+                "service": svc["name"],
+                "color":   svc["color"],
+                "type":    svc_key,
+                "slug":    agent_slug,
+            })
+    return render_template("reunion_generale.html", all_agents=all_agents, services=SERVICES,
+                           agent_slugs=AGENT_SLUGS)
+
+
+@app.route("/api/reunion-generale/ask", methods=["POST"])
+@login_required
+def api_reunion_generale_ask():
+    data        = request.get_json()
+    question    = (data.get("question") or "").strip()
+    agent_ids   = data.get("agents") or []
+
+    if not question:
+        return jsonify({"error": "question requise"}), 400
+    if not agent_ids:
+        return jsonify({"error": "Sélectionnez au moins un agent"}), 400
+
+    results     = {}
+    results_lock = threading.Lock()
+
+    def _call_agent(agent_id: str):
+        try:
+            parts = agent_id.split("__", 1)
+            if len(parts) != 2:
+                return
+            svc_type, slug = parts
+            if svc_type == "juridique":
+                role = AGENT_SLUGS.get(slug)
+                if not role:
+                    return
+                agent      = SpecializedLegalAgent(role)
+                raw        = agent.analyze(question)
+                content    = raw.content.strip() if hasattr(raw, "content") else str(raw)
+                if content.startswith("```"):
+                    content = content.split("```", 2)[1]
+                    if content.startswith("json"):
+                        content = content[4:]
+                    content = content.rsplit("```", 1)[0].strip()
+                parsed = json.loads(content)
+                with results_lock:
+                    results[agent_id] = {
+                        "agent_name": AGENT_PERSONAS[role]["name"],
+                        "service":    "Service Juridique",
+                        "color":      "#5b6af5",
+                        "result":     parsed,
+                        "risk_level": parsed.get("risk_level", "UNKNOWN"),
+                        "confidence": parsed.get("confidence", 0),
+                    }
+            else:
+                svc = SERVICES.get(svc_type)
+                if not svc or slug not in svc["agents"]:
+                    return
+                agent    = ServiceAgent(svc_type, slug)
+                raw      = agent.analyze(question)
+                content  = raw.content.strip() if hasattr(raw, "content") else str(raw)
+                if content.startswith("```"):
+                    content = content.split("```", 2)[1]
+                    if content.startswith("json"):
+                        content = content[4:]
+                    content = content.rsplit("```", 1)[0].strip()
+                parsed = json.loads(content)
+                with results_lock:
+                    results[agent_id] = {
+                        "agent_name": svc["agents"][slug]["name"],
+                        "service":    svc["name"],
+                        "color":      svc.get("color", "#64748b"),
+                        "result":     parsed,
+                        "risk_level": parsed.get("priority_level", "UNKNOWN"),
+                        "confidence": parsed.get("confidence", 0),
+                    }
+        except Exception as e:
+            with results_lock:
+                results[agent_id] = {"error": str(e)}
+
+    threads = []
+    for agent_id in agent_ids:
+        t = threading.Thread(target=_call_agent, args=(agent_id,), daemon=True)
+        threads.append(t)
+        t.start()
+    for t in threads:
+        t.join(timeout=120)
+
+    # Calcul du consensus
+    valid = [v for v in results.values() if not v.get("error") and v.get("confidence")]
+    avg_conf = sum(float(v["confidence"]) for v in valid) / len(valid) if valid else 0
+    risk_counts = {}
+    for v in valid:
+        r = v.get("risk_level", "UNKNOWN")
+        risk_counts[r] = risk_counts.get(r, 0) + 1
+    dominant_risk = max(risk_counts, key=risk_counts.get) if risk_counts else "UNKNOWN"
+
+    return jsonify({
+        "ok":           True,
+        "results":      results,
+        "consensus": {
+            "avg_confidence": round(avg_conf, 3),
+            "dominant_risk":  dominant_risk,
+            "agents_count":   len(results),
+        },
+    })
+
+
+# ─────────────────────────────────────────────────────────────
+# ÉVOLUTION 7 — Tableau de bord analytique
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/analytics")
+@login_required
+def analytics():
+    return render_template("analytics.html")
+
+
+@app.route("/api/analytics/data")
+@login_required
+def api_analytics_data():
+    conn   = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    # Missions par mois (12 derniers mois)
+    cursor.execute("""
+        SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, COUNT(*) AS count
+        FROM missions
+        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+        GROUP BY month
+        ORDER BY month ASC
+    """)
+    missions_by_month = cursor.fetchall()
+
+    # Total missions
+    cursor.execute("SELECT COUNT(*) AS n FROM missions")
+    missions_total = cursor.fetchone()["n"]
+
+    # Queries total
+    cursor.execute("SELECT COUNT(*) AS n FROM agent_queries")
+    aq = cursor.fetchone()["n"]
+    cursor.execute("SELECT COUNT(*) AS n FROM service_queries")
+    sq = cursor.fetchone()["n"]
+    queries_total = aq + sq
+
+    # Distribution des risques (depuis mission_tasks)
+    cursor.execute("""
+        SELECT risk_level, COUNT(*) AS count
+        FROM mission_tasks
+        WHERE risk_level IS NOT NULL AND status='done'
+        GROUP BY risk_level
+    """)
+    risk_rows = cursor.fetchall()
+    risk_distribution = {"HIGH": 0, "MEDIUM": 0, "LOW": 0, "UNKNOWN": 0}
+    for r in risk_rows:
+        risk_distribution[r["risk_level"]] = r["count"]
+
+    # Confiance moyenne
+    cursor.execute("SELECT AVG(confidence) AS avg_conf FROM mission_tasks WHERE confidence IS NOT NULL")
+    avg_row   = cursor.fetchone()
+    confidence_avg = round(float(avg_row["avg_conf"] or 0), 3)
+
+    # Top domaines de connaissance
+    cursor.execute("""
+        SELECT kd.label AS domain, COUNT(DISTINCT kdoc.id) AS count
+        FROM knowledge_domains kd
+        LEFT JOIN knowledge_documents kdoc ON kdoc.domain_id = kd.id AND kdoc.actif=1
+        GROUP BY kd.id, kd.label
+        HAVING count > 0
+        ORDER BY count DESC
+        LIMIT 5
+    """)
+    top_domains = cursor.fetchall()
+
+    # Stats knowledge
+    cursor.execute("SELECT COUNT(*) AS n FROM knowledge_documents WHERE actif=1")
+    nb_docs = cursor.fetchone()["n"]
+    cursor.execute("SELECT COUNT(*) AS n FROM knowledge_chunks")
+    nb_chunks = cursor.fetchone()["n"]
+    cursor.execute("SELECT COUNT(*) AS n FROM knowledge_embeddings")
+    nb_emb = cursor.fetchone()["n"]
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({
+        "missions_by_month": [{"month": r["month"], "count": r["count"]} for r in missions_by_month],
+        "risk_distribution": risk_distribution,
+        "confidence_avg":    confidence_avg,
+        "top_domains":       [{"domain": r["domain"], "count": r["count"]} for r in top_domains],
+        "missions_total":    missions_total,
+        "queries_total":     queries_total,
+        "knowledge_stats":   {"docs": nb_docs, "chunks": nb_chunks, "embeddings": nb_emb},
+    })
 
 
 if __name__ == "__main__":

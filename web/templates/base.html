@@ -235,9 +235,28 @@
         </a>
       </div>
     </div>
+    {% if session.user_id %}
+      <a href="/reunion-generale" style="color:var(--text-muted);text-decoration:none;font-size:.85rem;">Réunion</a>
+      {% if session.role in ('admin', 'manager') %}
+        <a href="/analytics" style="color:var(--text-muted);text-decoration:none;font-size:.85rem;">Analytics</a>
+      {% endif %}
+    {% endif %}
     <div style="margin-left:auto;display:flex;align-items:center;gap:1.25rem;">
       {% if session.role == 'admin' %}
-        <a href="/admin" style="color:var(--accent);text-decoration:none;font-size:.85rem;font-weight:600;">Admin</a>
+        <div class="nav-dropdown" id="nav-admin-dd">
+          <button class="nav-dropdown-btn" id="nav-admin-dd-btn" onclick="toggleAdminDropdown(event)" style="color:var(--accent);font-weight:600;">Admin ▾</button>
+          <div class="nav-dropdown-menu" id="nav-admin-dd-menu">
+            <a href="/admin">
+              <span style="color:var(--accent);">⚙</span> Utilisateurs
+            </a>
+            <a href="/admin/knowledge">
+              <span style="color:#10b981;">📚</span> Base de connaissances
+            </a>
+            <a href="/admin/scheduled">
+              <span style="color:#f59e0b;">⏱</span> Missions planifiées
+            </a>
+          </div>
+        </div>
       {% endif %}
       <a href="/settings" style="color:var(--text-muted);text-decoration:none;font-size:.85rem;">Paramètres</a>
       {% if session.username %}
@@ -269,11 +288,25 @@
       btn.classList.toggle('open', open);
     }
 
+    function toggleAdminDropdown(e) {
+      e.stopPropagation();
+      const btn  = document.getElementById('nav-admin-dd-btn');
+      const menu = document.getElementById('nav-admin-dd-menu');
+      if (!btn || !menu) return;
+      const open = menu.classList.toggle('open');
+      btn.classList.toggle('open', open);
+    }
+
     // Fermer en cliquant ailleurs
     document.addEventListener('click', function() {
-      const menu = document.getElementById('nav-dd-menu');
-      const btn  = document.getElementById('nav-dd-btn');
-      if (menu) { menu.classList.remove('open'); btn.classList.remove('open'); }
+      ['nav-dd-menu', 'nav-admin-dd-menu'].forEach(id => {
+        const menu = document.getElementById(id);
+        if (menu) menu.classList.remove('open');
+      });
+      ['nav-dd-btn', 'nav-admin-dd-btn'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.classList.remove('open');
+      });
     });
   </script>
   {% block scripts %}{% endblock %}

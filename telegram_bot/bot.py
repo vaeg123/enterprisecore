@@ -42,10 +42,12 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
+from database.db_config import get_connection
 from core.planning.mission_orchestrator import MissionOrchestrator
 from core.agents.specialized_legal_agent import SpecializedLegalAgent, AGENT_PERSONAS
 from core.agents.service_agent import ServiceAgent
 from core.agents.services_config import SERVICES, list_services
+from web.flask_auth import check_password, get_user
 
 logging.basicConfig(
     format="%(asctime)s [BOT] %(levelname)s %(message)s",
@@ -76,6 +78,78 @@ SERVICE_ALIASES = {
 RISK_ICONS = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}
 
 MAX_MSG = 4000   # limite Telegram : 4096 — marge de sécurité
+
+# ── Application globale (pour notify_user) ────────────────────
+_bot_app = None
+
+
+# ─────────────────────────────────────────────────────────────
+# ÉVOLUTION 2 — Notifications Telegram pro-actives
+# ─────────────────────────────────────────────────────────────
+
+def _get_user_chat_id(user_id: int):
+    """Retourne le telegram_chat_id de l'utilisateur s'il est lié."""
+    try:
+        conn   = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT telegram_chat_id FROM users WHERE id=%s", (user_id,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return row["telegram_chat_id"] if row else None
+    except Exception:
+        return None
+
+
+def notify_user(user_id: int, message: str) -> None:
+    """Envoie un message Telegram à l'utilisateur si son compte est lié."""
+    chat_id = _get_user_chat_id(user_id)
+    if not chat_id or not _bot_app:
+        return
+    try:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(_bot_app.bot.send_message(chat_id=chat_id, text=message))
+        loop.close()
+    except Exception as e:
+        log.warning(f"notify_user({user_id}): {e}")
+
+
+# ─────────────────────────────────────────────────────────────
+# ÉVOLUTION 5 — Sauvegarde des requêtes Telegram
+# ─────────────────────────────────────────────────────────────
+
+def save_telegram_query(chat_id: int, agent_type: str, agent_slug: str,
+                        question: str, result_json: dict,
+                        risk_level: str, confidence: float) -> None:
+    """Sauvegarde une requête Telegram dans agent_queries ou service_queries."""
+    import json
+    try:
+        conn   = get_connection()
+        cursor = conn.cursor()
+        if agent_type == "juridique":
+            cursor.execute(
+                "INSERT INTO agent_queries "
+                "(agent_role, question, result, risk_level, confidence, source, telegram_chat_id) "
+                "VALUES (%s, %s, %s, %s, %s, 'telegram', %s)",
+                (agent_slug, question, json.dumps(result_json, ensure_ascii=False),
+                 risk_level, confidence, chat_id)
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO service_queries "
+                "(service, agent_slug, question, result, priority_level, confidence, source, telegram_chat_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, 'telegram', %s)",
+                (agent_type, agent_slug, question,
+                 json.dumps(result_json, ensure_ascii=False),
+                 risk_level, confidence, chat_id)
+            )
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        log.warning(f"save_telegram_query: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -338,10 +412,34 @@ async def cmd_juridique(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         f"🔄 {agent_name} analyse votre question…"
     )
 
+    chat_id = update.effective_chat.id
     loop = asyncio.get_event_loop()
     try:
         agent = SpecializedLegalAgent(role)
         raw = await loop.run_in_executor(None, agent.analyze, question)
+
+        # ÉVOLUTION 5 — Sauvegarder dans agent_queries
+        try:
+            import json as _json
+            content = raw.content.strip() if hasattr(raw, "content") else str(raw)
+            if content.startswith("```"):
+                content = content.split("```", 2)[1]
+                if content.startswith("json"):
+                    content = content[4:]
+                content = content.rsplit("```", 1)[0].strip()
+            parsed_result = _json.loads(content)
+            save_telegram_query(
+                chat_id=chat_id,
+                agent_type="juridique",
+                agent_slug=role,
+                question=question,
+                result_json=parsed_result,
+                risk_level=parsed_result.get("risk_level", "UNKNOWN"),
+                confidence=float(parsed_result.get("confidence", 0)),
+            )
+        except Exception:
+            pass
+
         result = _format_agent_response(agent_name, raw)
         await wait_msg.edit_text(result[:MAX_MSG])
         for chunk in _split_long(result)[1:]:
@@ -390,10 +488,34 @@ async def _cmd_service(
         f"🔄 {agent_name} analyse votre question…"
     )
 
+    chat_id = update.effective_chat.id
     loop = asyncio.get_event_loop()
     try:
         agent = ServiceAgent(service_key, agent_slug)
         raw = await loop.run_in_executor(None, agent.analyze, question)
+
+        # ÉVOLUTION 5 — Sauvegarder dans service_queries
+        try:
+            import json as _json
+            content = raw.content.strip() if hasattr(raw, "content") else str(raw)
+            if content.startswith("```"):
+                content = content.split("```", 2)[1]
+                if content.startswith("json"):
+                    content = content[4:]
+                content = content.rsplit("```", 1)[0].strip()
+            parsed_result = _json.loads(content)
+            save_telegram_query(
+                chat_id=chat_id,
+                agent_type=service_key,
+                agent_slug=agent_slug,
+                question=question,
+                result_json=parsed_result,
+                risk_level=parsed_result.get("priority_level", "UNKNOWN"),
+                confidence=float(parsed_result.get("confidence", 0)),
+            )
+        except Exception:
+            pass
+
         result = _format_agent_response(agent_name, raw)
         await wait_msg.edit_text(result[:MAX_MSG])
         for chunk in _split_long(result)[1:]:
@@ -410,6 +532,65 @@ async def cmd_projets(u, c):    await _cmd_service(u, c, "projets")
 async def cmd_rd(u, c):         await _cmd_service(u, c, "rd")
 
 
+async def cmd_connect(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """ÉVOLUTION 2 — Lie le compte Telegram à un compte EnterpriseCore."""
+    if not ctx.args or len(ctx.args) < 2:
+        await _send(update,
+            "❌ Usage : /connect <username> <password>\n\n"
+            "Exemple :\n/connect marie.dupont monMotDePasse123"
+        )
+        return
+
+    username = ctx.args[0].strip()
+    password = " ".join(ctx.args[1:]).strip()
+    chat_id  = update.effective_chat.id
+
+    user = get_user(username)
+    if not user or not check_password(password, user["password_hash"]):
+        await _send(update, "❌ Identifiants incorrects. Vérifiez votre nom d'utilisateur et mot de passe.")
+        return
+
+    if user.get("is_active") == 0:
+        await _send(update, "❌ Ce compte est désactivé.")
+        return
+
+    try:
+        conn   = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET telegram_chat_id=%s WHERE id=%s", (chat_id, user["id"]))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        await _send(update,
+            f"✅ Compte lié avec succès !\n\n"
+            f"Bonjour {user['username']}, votre compte EnterpriseCore est maintenant connecté.\n"
+            f"Vous recevrez des notifications pro-actives ici."
+        )
+    except Exception as e:
+        log.exception("Erreur cmd_connect")
+        await _send(update, f"❌ Erreur : {e}")
+
+
+async def cmd_deconnect(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """ÉVOLUTION 2 — Délie le compte Telegram du compte EnterpriseCore."""
+    chat_id = update.effective_chat.id
+    try:
+        conn   = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET telegram_chat_id=NULL WHERE telegram_chat_id=%s", (chat_id,))
+        affected = cursor.rowcount
+        conn.commit()
+        cursor.close()
+        conn.close()
+        if affected > 0:
+            await _send(update, "✅ Compte déconnecté. Vous ne recevrez plus de notifications.")
+        else:
+            await _send(update, "ℹ️ Aucun compte lié à ce chat.")
+    except Exception as e:
+        log.exception("Erreur cmd_deconnect")
+        await _send(update, f"❌ Erreur : {e}")
+
+
 async def cmd_unknown(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await _send(update, "❓ Commande inconnue. Tapez /aide pour voir les commandes disponibles.")
 
@@ -419,6 +600,7 @@ async def cmd_unknown(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_bot() -> None:
+    global _bot_app
     if not TOKEN:
         log.error("TELEGRAM_TOKEN absent du .env — bot non démarré.")
         return
@@ -428,6 +610,7 @@ def run_bot() -> None:
         .token(TOKEN)
         .build()
     )
+    _bot_app = app
 
     app.add_handler(CommandHandler("start",       cmd_start))
     app.add_handler(CommandHandler("aide",        cmd_aide))
@@ -439,6 +622,8 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("financier",   cmd_financier))
     app.add_handler(CommandHandler("projets",     cmd_projets))
     app.add_handler(CommandHandler("rd",          cmd_rd))
+    app.add_handler(CommandHandler("connect",     cmd_connect))
+    app.add_handler(CommandHandler("deconnect",   cmd_deconnect))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))
 
     log.info("Bot Telegram démarré (polling)…")

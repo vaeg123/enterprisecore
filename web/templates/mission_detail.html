@@ -22,11 +22,18 @@
       <span class="status-dot status-{{ mission.status }}"></span>
       <span style="font-size:.85rem;">{{ mission.status }}</span>
     </div>
-    <a href="/api/mission/{{ mission.id }}/pdf"
-       class="btn btn-outline mt-2" style="font-size:.8rem;padding:5px 14px;"
-       title="Télécharger le rapport PDF">
-      ↓ PDF
-    </a>
+    <div class="flex mt-2" style="gap:.5rem;">
+      <a href="/api/mission/{{ mission.id }}/pdf"
+         class="btn btn-outline" style="font-size:.8rem;padding:5px 14px;"
+         title="Télécharger le rapport PDF">
+        ↓ PDF
+      </a>
+      <a href="/api/mission/{{ mission.id }}/docx"
+         class="btn btn-outline" style="font-size:.8rem;padding:5px 14px;color:var(--accent);"
+         title="Télécharger le rapport Word">
+        ↓ Word
+      </a>
+    </div>
   </div>
 </div>
 

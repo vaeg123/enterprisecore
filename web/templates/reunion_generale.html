@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}Réunion Générale — EnterpriseCore AI{% endblock %}
+
+{% block content %}
+<div class="flex-between mt-2">
+  <div>
+    <h1>Réunion Générale Multi-Services</h1>
+    <p class="text-muted mt-1">Consultez simultanément tous les agents disponibles sur votre situation</p>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 360px;gap:1.5rem;margin-top:1.5rem;align-items:start;">
+
+  <!-- Panneau gauche : question + résultats -->
+  <div>
+    <div class="card">
+      <h2>Votre situation</h2>
+      <div class="form-group">
+        <label>Décrivez votre question ou situation</label>
+        <textarea id="question-input" style="min-height:130px;" placeholder="Ex: Nous souhaitons lancer un CRM cloud qui collecte les données personnelles de nos prospects. Analyser les risques et opportunités."></textarea>
+      </div>
+      <button class="btn btn-primary" id="ask-btn" onclick="askAll()" disabled>
+        ⚡ Lancer l'analyse collective
+      </button>
+      <span class="text-muted" style="font-size:.8rem;margin-left:.75rem;" id="selected-count">0 agent(s) sélectionné(s)</span>
+    </div>
+
+    <!-- Résultats -->
+    <div id="results-area" class="mt-2" style="display:none;">
+      <div class="card" style="margin-bottom:1rem;">
+        <div id="consensus-block" style="display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap;">
+          <div>
+            <div class="text-muted" style="font-size:.75rem;">RISQUE DOMINANT</div>
+            <div id="consensus-risk" style="font-size:1.3rem;font-weight:700;">—</div>
+          </div>
+          <div>
+            <div class="text-muted" style="font-size:.75rem;">CONFIANCE MOYENNE</div>
+            <div id="consensus-conf" style="font-size:1.3rem;font-weight:700;color:var(--accent);">—</div>
+          </div>
+          <div>
+            <div class="text-muted" style="font-size:.75rem;">AGENTS CONSULTÉS</div>
+            <div id="consensus-count" style="font-size:1.3rem;font-weight:700;color:var(--low);">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="agent-results-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:1rem;">
+      </div>
+    </div>
+  </div>
+
+  <!-- Panneau droit : sélection des agents -->
+  <div>
+    <div class="card" style="position:sticky;top:1.5rem;">
+      <div class="flex-between" style="margin-bottom:.75rem;">
+        <h2 style="margin:0;">Agents disponibles</h2>
+        <div style="display:flex;gap:.5rem;">
+          <button class="btn btn-outline" style="padding:3px 10px;font-size:.75rem;" onclick="selectAll()">Tout</button>
+          <button class="btn btn-outline" style="padding:3px 10px;font-size:.75rem;" onclick="deselectAll()">Aucun</button>
+        </div>
+      </div>
+
+      <!-- Groupe juridique -->
+      <div style="margin-bottom:1rem;">
+        <div style="font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px;
+                    color:#5b6af5;margin-bottom:.4rem;">⚖ Service Juridique</div>
+        {% for agent in all_agents if agent.type == 'juridique' %}
+        <label style="display:flex;align-items:center;gap:.5rem;padding:.45rem .5rem;
+               border-radius:6px;cursor:pointer;margin-bottom:.25rem;background:var(--surface2);
+               border:1px solid transparent;" class="agent-checkbox-label" data-id="{{ agent.id }}">
+          <input type="checkbox" name="agent-select" value="{{ agent.id }}" class="agent-checkbox"
+                 style="width:auto;" onchange="updateSelectedCount()">
+          <span style="font-size:.82rem;">{{ agent.name }}</span>
+        </label>
+        {% endfor %}
+      </div>
+
+      <!-- Groupes services métier -->
+      {% for svc_key, svc in services.items() %}
+      <div style="margin-bottom:1rem;">
+        <div style="font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px;
+                    color:{{ svc.color }};margin-bottom:.4rem;">{{ svc.icon }} {{ svc.name }}</div>
+        {% for agent in all_agents if agent.type == svc_key %}
+        <label style="display:flex;align-items:center;gap:.5rem;padding:.45rem .5rem;
+               border-radius:6px;cursor:pointer;margin-bottom:.25rem;background:var(--surface2);
+               border:1px solid transparent;" class="agent-checkbox-label" data-id="{{ agent.id }}">
+          <input type="checkbox" name="agent-select" value="{{ agent.id }}" class="agent-checkbox"
+                 style="width:auto;" onchange="updateSelectedCount()">
+          <span style="font-size:.82rem;">{{ agent.name }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const RISK_COLORS = { HIGH: 'var(--high)', MEDIUM: 'var(--medium)', LOW: 'var(--low)', UNKNOWN: 'var(--unknown)' };
+  const ALL_AGENTS = {{ all_agents|tojson }};
+
+  function updateSelectedCount() {
+    const checked = document.querySelectorAll('.agent-checkbox:checked').length;
+    document.getElementById('selected-count').textContent = checked + ' agent(s) sélectionné(s)';
+    document.getElementById('ask-btn').disabled = checked === 0;
+
+    // Highlight sélectionnés
+    document.querySelectorAll('.agent-checkbox-label').forEach(label => {
+      const cb = label.querySelector('input');
+      label.style.borderColor = cb.checked ? 'var(--accent)' : 'transparent';
+      label.style.background  = cb.checked ? 'rgba(91,106,245,.1)' : 'var(--surface2)';
+    });
+  }
+
+  function selectAll() {
+    document.querySelectorAll('.agent-checkbox').forEach(cb => cb.checked = true);
+    updateSelectedCount();
+  }
+
+  function deselectAll() {
+    document.querySelectorAll('.agent-checkbox').forEach(cb => cb.checked = false);
+    updateSelectedCount();
+  }
+
+  function _riskBadge(level) {
+    const color = RISK_COLORS[level] || 'var(--unknown)';
+    return `<span style="display:inline-block;padding:2px 8px;border-radius:20px;font-size:.72rem;
+            font-weight:600;background:${color}22;color:${color};border:1px solid ${color}44;">${level || '—'}</span>`;
+  }
+
+  function _renderAgentCard(agentId, data) {
+    const agent = ALL_AGENTS.find(a => a.id === agentId) || {};
+    const color = agent.color || '#64748b';
+
+    if (data.error) {
+      return `<div class="card" style="border-top:3px solid var(--high);">
+        <div style="font-size:.82rem;font-weight:600;color:${color};">${agent.name || agentId}</div>
+        <div style="color:var(--text-muted);font-size:.8rem;margin-top:.25rem;">${agent.service || ''}</div>
+        <div style="color:var(--high);font-size:.85rem;margin-top:.75rem;">❌ ${data.error}</div>
+      </div>`;
+    }
+
+    const r      = data.result || {};
+    const risk   = data.risk_level || 'UNKNOWN';
+    const conf   = Math.round(parseFloat(data.confidence || 0) * 100);
+    const analysis = r.analysis || r.executive_summary || '—';
+    const reco   = r.recommendation || '';
+    const points = r.key_points || [];
+
+    return `<div class="card" style="border-top:3px solid ${color};">
+      <div style="font-size:.82rem;font-weight:600;color:${color};">${data.agent_name || agentId}</div>
+      <div style="color:var(--text-muted);font-size:.75rem;margin-top:.2rem;">${data.service || ''}</div>
+      <div style="display:flex;align-items:center;gap:.5rem;margin-top:.6rem;flex-wrap:wrap;">
+        ${_riskBadge(risk)}
+        <span style="font-size:.78rem;color:var(--text-muted);">Confiance : <strong style="color:var(--accent);">${conf}%</strong></span>
+      </div>
+      ${analysis ? `<div style="font-size:.83rem;margin-top:.75rem;line-height:1.65;">${analysis.substring(0,300)}${analysis.length>300?'…':''}</div>` : ''}
+      ${points.length ? `<ul style="margin:.6rem 0 0 1rem;padding:0;font-size:.8rem;color:var(--text-muted);">${points.slice(0,3).map(p=>`<li>${p}</li>`).join('')}</ul>` : ''}
+      ${reco ? `<div style="margin-top:.6rem;padding:.5rem;background:var(--surface2);border-radius:4px;
+                border-left:2px solid ${color};font-size:.8rem;">→ ${reco.substring(0,200)}${reco.length>200?'…':''}</div>` : ''}
+    </div>`;
+  }
+
+  async function askAll() {
+    const question = document.getElementById('question-input').value.trim();
+    if (!question) { showToast('Saisissez une question.'); return; }
+
+    const agentIds = [...document.querySelectorAll('.agent-checkbox:checked')].map(cb => cb.value);
+    if (agentIds.length === 0) { showToast('Sélectionnez au moins un agent.'); return; }
+
+    const btn = document.getElementById('ask-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Analyse en cours…';
+
+    const resultsArea = document.getElementById('results-area');
+    const grid        = document.getElementById('agent-results-grid');
+    resultsArea.style.display = 'block';
+    grid.innerHTML = '<div class="text-muted" style="grid-column:1/-1;text-align:center;padding:2rem;">⏳ Consultation de ' + agentIds.length + ' agent(s)…</div>';
+
+    try {
+      const resp = await fetch('/api/reunion-generale/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, agents: agentIds }),
+      });
+      const data = await resp.json();
+
+      if (data.error) {
+        grid.innerHTML = `<div style="color:var(--high);grid-column:1/-1;">❌ ${data.error}</div>`;
+        return;
+      }
+
+      // Consensus
+      const c = data.consensus || {};
+      const riskColor = RISK_COLORS[c.dominant_risk] || 'var(--unknown)';
+      document.getElementById('consensus-risk').innerHTML =
+        `<span style="color:${riskColor};">${c.dominant_risk || '—'}</span>`;
+      document.getElementById('consensus-conf').textContent =
+        c.avg_confidence ? Math.round(c.avg_confidence * 100) + '%' : '—';
+      document.getElementById('consensus-count').textContent = c.agents_count || '—';
+
+      // Cartes agents
+      grid.innerHTML = '';
+      for (const [agentId, agentData] of Object.entries(data.results)) {
+        const card = document.createElement('div');
+        card.innerHTML = _renderAgentCard(agentId, agentData);
+        grid.appendChild(card.firstChild);
+      }
+
+      if (Object.keys(data.results).length === 0) {
+        grid.innerHTML = '<div class="text-muted" style="grid-column:1/-1;text-align:center;padding:2rem;">Aucun résultat.</div>';
+      }
+    } catch(e) {
+      grid.innerHTML = `<div style="color:var(--high);grid-column:1/-1;">❌ Erreur réseau : ${e.message}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '⚡ Lancer l\'analyse collective';
+    }
+  }
+</script>
+{% endblock %}
